@@ -1,0 +1,23 @@
+# .NET ビルド出力
+bin/
+obj/
+publish/
+
+# IDE / エディタ設定
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# ログファイル・一時ファイル
+*.log
+debug.log
+
+# 設定ファイル (APIキー等の機密情報保護)
+settings.json
+appsettings*.Development.json
+
+# テスト結果
+TestResults/
