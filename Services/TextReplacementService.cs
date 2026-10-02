@@ -39,6 +39,7 @@ public class TextReplacementService
     private const byte VK_LCONTROL = 0xA2;
     private const byte VK_LSHIFT = 0xA0;
     private const byte VK_HOME = 0x24;
+    private const byte VK_UP = 0x26;
     private const byte VK_C = 0x43;
     private const byte VK_V = 0x56;
 
@@ -73,13 +74,21 @@ public class TextReplacementService
             // まずは選択されているテキストのコピーを試みる
             string selectedText = await TryCopyTextAsync();
 
-            // もし選択テキストが空かつ自動選択が有効な場合、直前の行（Shift+Home）を選択して再試行
+            // もし選択テキストが空かつ自動選択が有効な場合、折り返しを考慮して論理行全体（段落先頭まで）を選択して再試行
             if (string.IsNullOrWhiteSpace(selectedText) && settings.AutoSelectLineWhenEmpty)
             {
-                StatusLogged?.Invoke("未選択を検知: Shift+Home で直前テキストを選択中...");
-                SendShiftHome();
-                await Task.Delay(80);
+                StatusLogged?.Invoke("未選択を検知: 折り返しを考慮して行全体を自動選択中...");
+                SendSmartLineSelect();
+                await Task.Delay(90);
                 selectedText = await TryCopyTextAsync();
+
+                // フォールバック: 万一特殊なエディタで取れなかった場合は Shift+Home 単体でも試行
+                if (string.IsNullOrWhiteSpace(selectedText))
+                {
+                    SendShiftHome();
+                    await Task.Delay(60);
+                    selectedText = await TryCopyTextAsync();
+                }
             }
 
             if (string.IsNullOrWhiteSpace(selectedText))
@@ -226,6 +235,33 @@ public class TextReplacementService
         keybd_event(key, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
         Thread.Sleep(15);
 
+        keybd_event(VK_LCONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        Thread.Sleep(10);
+    }
+
+    /// <summary>
+    /// 折り返しを考慮して論理行全体（直前の改行から現在位置まで）を自動選択する
+    /// </summary>
+    private static void SendSmartLineSelect()
+    {
+        // 1. Ctrl + Shift + Up (段落・論理行の先頭行まで選択を拡張)
+        keybd_event(VK_LCONTROL, 0, 0, UIntPtr.Zero);
+        Thread.Sleep(10);
+        keybd_event(VK_LSHIFT, 0, 0, UIntPtr.Zero);
+        Thread.Sleep(10);
+        keybd_event(VK_UP, 0, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero);
+        Thread.Sleep(20);
+        keybd_event(VK_UP, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, UIntPtr.Zero);
+        Thread.Sleep(10);
+
+        // 2. 続けて Shift + Home (その行の最先頭に合わせる)
+        keybd_event(VK_HOME, 0, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero);
+        Thread.Sleep(20);
+        keybd_event(VK_HOME, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, UIntPtr.Zero);
+        Thread.Sleep(10);
+
+        keybd_event(VK_LSHIFT, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        Thread.Sleep(10);
         keybd_event(VK_LCONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
         Thread.Sleep(10);
     }
