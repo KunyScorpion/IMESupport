@@ -13,6 +13,9 @@ public class HistoryItem
     public string Model { get; set; } = string.Empty;
 
     public string FormattedTime => Timestamp.ToString("HH:mm:ss");
+
+    public string DisplayStatus => HasChanged ? "✨ 修正あり" : (Status == "エラー" ? "⚠️ エラー" : "修正なし");
+    public string StatusBadgeColor => HasChanged ? "#10B981" : (Status == "エラー" ? "#EF4444" : "#9CA3AF");
 }
 
 /// <summary>

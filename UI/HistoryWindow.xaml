@@ -2,15 +2,18 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="推敲履歴 - IMESupport"
-        Height="500" Width="700"
+        Height="680" Width="820"
         WindowStartupLocation="CenterScreen"
-        Background="#F9FAFB"
-        FontFamily="Segoe UI, Yu Gothic UI, Meiryo">
+        Background="#F3F4F6"
+        FontFamily="Segoe UI, Yu Gothic UI, Meiryo"
+        ResizeMode="CanResizeWithGrip">
 
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="180*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="180*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -18,29 +21,90 @@
         <Grid Grid.Row="0" Margin="0,0,0,12">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock Text="📜 推敲履歴一覧" FontSize="16" FontWeight="Bold" Foreground="#111827"/>
-                <TextBlock Text="(最新100件まで自動記録)" FontSize="12" Foreground="#6B7280" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                <TextBlock Text="(一覧から選択すると、下に差分ハイライトが表示されます)" FontSize="12" Foreground="#6B7280" VerticalAlignment="Center" Margin="10,0,0,0"/>
             </StackPanel>
-            <Button x:Name="BtnClear" Content="🗑️ 履歴をクリア" HorizontalAlignment="Right" Padding="10,5" Background="#EF4444" Foreground="White" BorderThickness="0" Cursor="Hand" Click="BtnClear_Click"/>
+            <Button x:Name="BtnClear" Content="🗑️ 履歴をクリア" HorizontalAlignment="Right" Padding="12,5" Background="#EF4444" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="Medium" Click="BtnClear_Click"/>
         </Grid>
 
-        <!-- リスト -->
-        <ListView x:Name="LvHistory" Grid.Row="1" Background="White" BorderBrush="#E5E7EB" SelectionMode="Single">
-            <ListView.View>
-                <GridView>
-                    <GridViewColumn Header="時刻" Width="80" DisplayMemberBinding="{Binding FormattedTime}"/>
-                    <GridViewColumn Header="元の文章" Width="260" DisplayMemberBinding="{Binding OriginalText}"/>
-                    <GridViewColumn Header="修正後の文章" Width="260" DisplayMemberBinding="{Binding CorrectedText}"/>
-                    <GridViewColumn Header="ステータス" Width="80" DisplayMemberBinding="{Binding Status}"/>
-                </GridView>
-            </ListView.View>
-        </ListView>
+        <!-- リスト一覧 -->
+        <Border Grid.Row="1" Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
+            <ListView x:Name="LvHistory" BorderThickness="0" SelectionMode="Single" SelectionChanged="LvHistory_SelectionChanged">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="時刻" Width="70" DisplayMemberBinding="{Binding FormattedTime}"/>
+                        <GridViewColumn Header="状態" Width="95">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Border Background="{Binding StatusBadgeColor}" CornerRadius="4" Padding="6,2" HorizontalAlignment="Left">
+                                        <TextBlock Text="{Binding DisplayStatus}" Foreground="White" FontSize="11" FontWeight="Bold"/>
+                                    </Border>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="元の文章" Width="300" DisplayMemberBinding="{Binding OriginalText}"/>
+                        <GridViewColumn Header="修正後の文章" Width="300" DisplayMemberBinding="{Binding CorrectedText}"/>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+        </Border>
+
+        <!-- グリッドスプリッター風ラベル -->
+        <Grid Grid.Row="2" Margin="0,10,0,6">
+            <TextBlock Text="🔍 修正箇所の比較プレビュー (色分けハイライト)" FontWeight="Bold" FontSize="13" Foreground="#374151"/>
+        </Grid>
+
+        <!-- 差分プレビューエリア -->
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- 修正前カード -->
+            <Border Grid.Column="0" Margin="0,0,6,0" Background="White" BorderBrush="#FECACA" BorderThickness="1" CornerRadius="6" Padding="10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
+                        <Border Background="#FEE2E2" CornerRadius="3" Padding="6,2" Margin="0,0,8,0">
+                            <TextBlock Text="修正前 (原文)" Foreground="#DC2626" FontSize="11" FontWeight="Bold"/>
+                        </Border>
+                        <TextBlock Text="※ 赤色背景・取消線が変更前の文字です" FontSize="11" Foreground="#9CA3AF" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <TextBlock x:Name="TbDiffBefore" TextWrapping="Wrap" FontSize="13" LineHeight="20"/>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <!-- 修正後カード -->
+            <Border Grid.Column="1" Margin="6,0,0,0" Background="White" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="6" Padding="10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
+                        <Border Background="#DCFCE7" CornerRadius="3" Padding="6,2" Margin="0,0,8,0">
+                            <TextBlock Text="修正後 (AI推敲)" Foreground="#16A34A" FontSize="11" FontWeight="Bold"/>
+                        </Border>
+                        <TextBlock Text="※ 緑色背景・太字が修正された文字です" FontSize="11" Foreground="#9CA3AF" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <TextBlock x:Name="TbDiffAfter" TextWrapping="Wrap" FontSize="13" LineHeight="20"/>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
 
         <!-- フッター -->
-        <Grid Grid.Row="2" Margin="0,12,0,0">
-            <TextBlock Text="※ 行を選択して「コピー」をクリックすると修正後の文章をクリップボードにコピーできます" VerticalAlignment="Center" FontSize="11" Foreground="#6B7280"/>
+        <Grid Grid.Row="4" Margin="0,12,0,0">
+            <TextBlock Text="※ 行を選択すると、修正された部分が赤と緑でハイライトされます" VerticalAlignment="Center" FontSize="11" Foreground="#6B7280"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button x:Name="BtnCopy" Content="📋 修正文をコピー" Padding="12,6" Margin="0,0,8,0" Background="#3B82F6" Foreground="White" BorderThickness="0" Cursor="Hand" Click="BtnCopy_Click"/>
-                <Button x:Name="BtnClose" Content="閉じる" Width="70" Padding="12,6" Background="#9CA3AF" Foreground="White" BorderThickness="0" Cursor="Hand" Click="BtnClose_Click"/>
+                <Button x:Name="BtnCopy" Content="📋 修正文をコピー" Padding="14,6" Margin="0,0,8,0" Background="#3B82F6" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="Medium" Click="BtnCopy_Click"/>
+                <Button x:Name="BtnClose" Content="閉じる" Width="80" Padding="14,6" Background="#9CA3AF" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="Medium" Click="BtnClose_Click"/>
             </StackPanel>
         </Grid>
     </Grid>

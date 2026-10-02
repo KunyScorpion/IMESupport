@@ -39,7 +39,8 @@ public class TextReplacementService
     private const byte VK_LCONTROL = 0xA2;
     private const byte VK_LSHIFT = 0xA0;
     private const byte VK_HOME = 0x24;
-    private const byte VK_UP = 0x26;
+    private const byte VK_LEFT = 0x25;
+    private const byte VK_RIGHT = 0x27;
     private const byte VK_C = 0x43;
     private const byte VK_V = 0x56;
 
@@ -71,24 +72,14 @@ public class TextReplacementService
             }
 
             // 3. テキスト取得を試行
-            // まずは選択されているテキストのコピーを試みる
+            // まずはユーザーが既に選択しているテキストのコピーを試みる
             string selectedText = await TryCopyTextAsync();
 
-            // もし選択テキストが空かつ自動選択が有効な場合、折り返しを考慮して論理行全体（段落先頭まで）を選択して再試行
+            // もし未選択かつ自動選択が有効な場合、マウスのトリプルクリックと同様に「現在の1段落」のみを選択
             if (string.IsNullOrWhiteSpace(selectedText) && settings.AutoSelectLineWhenEmpty)
             {
-                StatusLogged?.Invoke("未選択を検知: 折り返しを考慮して行全体を自動選択中...");
-                SendSmartLineSelect();
-                await Task.Delay(90);
-                selectedText = await TryCopyTextAsync();
-
-                // フォールバック: 万一特殊なエディタで取れなかった場合は Shift+Home 単体でも試行
-                if (string.IsNullOrWhiteSpace(selectedText))
-                {
-                    SendShiftHome();
-                    await Task.Delay(60);
-                    selectedText = await TryCopyTextAsync();
-                }
+                StatusLogged?.Invoke("未選択を検知: 現在の1段落（折り返し含む）を自動選択中...");
+                selectedText = await TrySelectCurrentParagraphAsync();
             }
 
             if (string.IsNullOrWhiteSpace(selectedText))
@@ -166,8 +157,64 @@ public class TextReplacementService
     }
 
     /// <summary>
+    /// マウスのトリプルクリックと同様に、現在の段落（直前の改行から現在位置まで）のみを自動選択する
+    /// </summary>
+    private static async Task<string> TrySelectCurrentParagraphAsync()
+    {
+        // 1. まず現在の折り返し行の行頭まで選択 (Shift + Home)
+        SendShiftHome();
+        await Task.Delay(60);
+        string currentText = await TryCopyTextAsync();
+
+        if (string.IsNullOrEmpty(currentText))
+        {
+            return string.Empty;
+        }
+
+        // 2. 折り返しを遡って段落の先頭（直前の改行またはテキスト先頭）まで拡張（最大15行分遡る）
+        for (int i = 0; i < 15; i++)
+        {
+            // 1文字左へ選択を広げてみる (Shift + Left)
+            SendShiftLeft();
+            await Task.Delay(35);
+            string expandedText = await TryCopyTextAsync();
+
+            // 長さが変わらない（これ以上左に行けない＝テキストの最先頭に達した）
+            if (expandedText.Length == currentText.Length)
+            {
+                break;
+            }
+
+            // 新しく含まれた先頭文字をチェック
+            char firstChar = expandedText[0];
+            if (firstChar == '\n' || firstChar == '\r')
+            {
+                // 直前の改行に達した！
+                // 改行自体は選択範囲から外すため、1文字右に戻す (Shift + Right)
+                SendShiftRight();
+                await Task.Delay(35);
+                return currentText;
+            }
+
+            // 改行ではない ＝ これは画面端での自動折り返し（ワードラップ）！
+            // その折り返し行の最先頭まで選択を伸ばす (Shift + Home)
+            SendShiftHome();
+            await Task.Delay(35);
+            string lineText = await TryCopyTextAsync();
+
+            if (string.IsNullOrEmpty(lineText) || lineText.Length <= expandedText.Length)
+            {
+                currentText = expandedText;
+                break;
+            }
+            currentText = lineText;
+        }
+
+        return currentText;
+    }
+
+    /// <summary>
     /// Ctrl+Cを送信し、新しくコピーされたテキストのみを取得する
-    /// （古いクリップボード内容を誤って取得しないよう厳密にシーケンス番号をチェック）
     /// </summary>
     private static async Task<string> TryCopyTextAsync()
     {
@@ -192,7 +239,7 @@ public class TextReplacementService
             }
         }
 
-        // コピーされなかった場合は絶対に古いクリップボードを返さず空を返す
+        // コピーされなかった場合は空を返す
         return string.Empty;
     }
 
@@ -239,33 +286,6 @@ public class TextReplacementService
         Thread.Sleep(10);
     }
 
-    /// <summary>
-    /// 折り返しを考慮して論理行全体（直前の改行から現在位置まで）を自動選択する
-    /// </summary>
-    private static void SendSmartLineSelect()
-    {
-        // 1. Ctrl + Shift + Up (段落・論理行の先頭行まで選択を拡張)
-        keybd_event(VK_LCONTROL, 0, 0, UIntPtr.Zero);
-        Thread.Sleep(10);
-        keybd_event(VK_LSHIFT, 0, 0, UIntPtr.Zero);
-        Thread.Sleep(10);
-        keybd_event(VK_UP, 0, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero);
-        Thread.Sleep(20);
-        keybd_event(VK_UP, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, UIntPtr.Zero);
-        Thread.Sleep(10);
-
-        // 2. 続けて Shift + Home (その行の最先頭に合わせる)
-        keybd_event(VK_HOME, 0, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero);
-        Thread.Sleep(20);
-        keybd_event(VK_HOME, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, UIntPtr.Zero);
-        Thread.Sleep(10);
-
-        keybd_event(VK_LSHIFT, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-        Thread.Sleep(10);
-        keybd_event(VK_LCONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-        Thread.Sleep(10);
-    }
-
     private static void SendShiftHome()
     {
         keybd_event(VK_LSHIFT, 0, 0, UIntPtr.Zero);
@@ -276,6 +296,36 @@ public class TextReplacementService
 
         keybd_event(VK_HOME, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, UIntPtr.Zero);
         Thread.Sleep(15);
+
+        keybd_event(VK_LSHIFT, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        Thread.Sleep(10);
+    }
+
+    private static void SendShiftLeft()
+    {
+        keybd_event(VK_LSHIFT, 0, 0, UIntPtr.Zero);
+        Thread.Sleep(10);
+
+        keybd_event(VK_LEFT, 0, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero);
+        Thread.Sleep(15);
+
+        keybd_event(VK_LEFT, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, UIntPtr.Zero);
+        Thread.Sleep(10);
+
+        keybd_event(VK_LSHIFT, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        Thread.Sleep(10);
+    }
+
+    private static void SendShiftRight()
+    {
+        keybd_event(VK_LSHIFT, 0, 0, UIntPtr.Zero);
+        Thread.Sleep(10);
+
+        keybd_event(VK_RIGHT, 0, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero);
+        Thread.Sleep(15);
+
+        keybd_event(VK_RIGHT, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, UIntPtr.Zero);
+        Thread.Sleep(10);
 
         keybd_event(VK_LSHIFT, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
         Thread.Sleep(10);
