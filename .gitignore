@@ -1,23 +1,96 @@
-# .NET ビルド出力
-bin/
-obj/
-publish/
+# ==========================================
+# .NET / C# ビルド出力・キャッシュ
+# ==========================================
+[Bb]in/
+[Oo]bj/
+[Pp]ublish/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+bld/
+[Bb]uild/
+*.dll.config
+*.deps.json
+*.runtimeconfig.json
+*.generated.cs
 
-# IDE / エディタ設定
+# Visual Studio / VS Code
 .vs/
 .vscode/
 *.user
 *.suo
 *.userosscache
 *.sln.docstates
+*.userprefs
+*.dbmdl
+*.jfm
 
-# ログファイル・一時ファイル
+# Rider / JetBrains
+.idea/
+
+# テスト結果・カバレッジ
+TestResults/
+[Tt]est[Rr]esult*/
+coverage/
+*.cobertura.xml
+
+# ==========================================
+# 環境変数・シークレット・機密設定ファイル
+# ==========================================
+.env
+.env.*
+*.env
+*.env.local
+*.env.development
+*.env.test
+*.env.production
+settings.json
+settings.*.json
+appsettings*.Development.json
+appsettings*.Local.json
+*.pem
+*.key
+*.pfx
+*.p12
+
+# ==========================================
+# パッケージ / ライブラリフォルダ
+# ==========================================
+node_modules/
+packages/
+jspm_packages/
+.pnp
+.pnp.js
+
+# ==========================================
+# ログ・一時ファイル・キャッシュ
+# ==========================================
 *.log
 debug.log
+logs/
+*.tmp
+*.temp
+*~
+*.cache
+.cache/
 
-# 設定ファイル (APIキー等の機密情報保護)
-settings.json
-appsettings*.Development.json
+# Python キャッシュ (ツール・スクリプト用)
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
 
-# テスト結果
-TestResults/
+# OS生成ファイル
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# AI / エディタ補助設定
+.claude/
+.gemini/
