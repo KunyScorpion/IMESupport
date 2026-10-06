@@ -113,6 +113,10 @@ public partial class App : Application
     private void OnHookTriggerDetected(object? sender, EventArgs e)
     {
         LogDebug("OnHookTriggerDetected 受信。ワークフロー開始。");
+        Dispatcher.Invoke(() =>
+        {
+            _trayManager.SetStatus(AppStatus.Processing, "IMESupport: ⏳ AI推敲中...", autoReset: false);
+        });
         // バックグラウンドで推敲・置換ワークフローを実行
         _ = _replacementService.ExecuteWorkflowAsync(_settings);
     }
@@ -120,16 +124,25 @@ public partial class App : Application
     private void OnProcessingStarted(string targetText)
     {
         LogDebug($"推敲処理開始: {targetText}");
+        Dispatcher.Invoke(() =>
+        {
+            string summary = Truncate(targetText, 25);
+            _trayManager.SetStatus(AppStatus.Processing, $"IMESupport: ⏳ AI推敲中... (「{summary}」)", autoReset: false);
+        });
     }
 
     private void OnStatusLogged(string message)
     {
         LogDebug($"[TextService] {message}");
-        if (_settings.ShowNotification && (message.StartsWith("⚠️") || message.StartsWith("❌")))
+        if (message.StartsWith("⚠️") || message.StartsWith("❌"))
         {
             Dispatcher.Invoke(() =>
             {
-                _trayManager.ShowNotification("IMESupport", message, ToolTipIcon.Warning);
+                _trayManager.SetStatus(AppStatus.Error, $"IMESupport: {message}");
+                if (_settings.ShowNotification)
+                {
+                    _trayManager.ShowNotification("IMESupport", message, ToolTipIcon.Warning);
+                }
             });
         }
     }
@@ -148,20 +161,29 @@ public partial class App : Application
                 Model = _settings.Model
             });
 
-            if (_settings.ShowNotification)
+            if (!result.Success)
             {
-                if (!result.Success)
+                string errMsg = result.ErrorMessage ?? "処理中にエラーが発生しました。";
+                _trayManager.SetStatus(AppStatus.Error, $"IMESupport: ❌ エラー ({errMsg})");
+                if (_settings.ShowNotification)
                 {
-                    _trayManager.ShowNotification(
-                        "推敲エラー",
-                        result.ErrorMessage ?? "処理中にエラーが発生しました。",
-                        ToolTipIcon.Warning);
+                    _trayManager.ShowNotification("推敲エラー", errMsg, ToolTipIcon.Warning);
                 }
-                else if (result.HasChanged)
+            }
+            else if (result.HasChanged)
+            {
+                string orig = Truncate(result.OriginalText, 15);
+                string corr = Truncate(result.CorrectedText, 15);
+                _trayManager.SetStatus(AppStatus.Success, $"IMESupport: ✨ 修正完了 (「{orig}」→「{corr}」)");
+                if (_settings.ShowNotification)
                 {
                     string message = $"「{Truncate(result.OriginalText, 30)}」\n→「{Truncate(result.CorrectedText, 30)}」";
                     _trayManager.ShowNotification("✨ AI修正完了", message, ToolTipIcon.Info);
                 }
+            }
+            else
+            {
+                _trayManager.SetStatus(AppStatus.NoChange, "IMESupport: 修正不要（正しい文章です）");
             }
 
             if (result.Success && result.HasChanged && _settings.PlaySoundOnComplete)
