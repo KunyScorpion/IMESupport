@@ -203,7 +203,8 @@ public partial class SettingsWindow : Window
             SystemPrompt = TbPrompt.Text
         };
 
-        var result = await _geminiService.ProofreadAsync(inputText, tempSettings);
+        var analysis = KeystrokeAnalyzer.BuildAnalysisHint(inputText);
+        var result = await _geminiService.ProofreadAsync(inputText, tempSettings, analysis);
 
         if (result.Success)
         {

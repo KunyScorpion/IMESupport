@@ -95,9 +95,17 @@ public class TextReplacementService
             StatusLogged?.Invoke($"テキスト取得成功 ({selectedText.Length}文字): 「{Truncate(selectedText, 25)}」");
             ProcessingStarted?.Invoke(selectedText);
 
-            // 4. Gemini API に推敲リクエスト
+            // 4. キーストローク逆変換解析と直前文脈の取得（レイテンシ0ms）
+            var analysis = KeystrokeAnalyzer.BuildAnalysisHint(selectedText);
+            if (analysis.HasAnomaly)
+            {
+                StatusLogged?.Invoke($"🔍 ローマ字崩壊ヒント生成: 読み=「{Truncate(analysis.ReadingText, 20)}」, 推定打鍵=「{Truncate(analysis.EstimatedRomaji, 25)}」");
+            }
+            string recentContext = HistoryManager.GetRecentContext(maxCount: 3, withinMinutes: 5);
+
+            // 5. Gemini API に推敲リクエスト
             StatusLogged?.Invoke($"Gemini API ({settings.Model}) に推敲リクエスト送信中...");
-            var result = await _geminiService.ProofreadAsync(selectedText, settings);
+            var result = await _geminiService.ProofreadAsync(selectedText, settings, analysis, recentContext);
 
             if (!result.Success)
             {
@@ -110,7 +118,7 @@ public class TextReplacementService
                 return;
             }
 
-            // 5. 修正が必要な場合、置換を実行
+            // 6. 修正が必要な場合、置換を実行
             if (result.HasChanged)
             {
                 StatusLogged?.Invoke($"✨ 修正検知: 「{Truncate(result.CorrectedText, 25)}」へ置換します...");
@@ -131,7 +139,7 @@ public class TextReplacementService
                 StatusLogged?.Invoke("推敲完了: 修正の必要はありません（すでに正しい文章です）。");
             }
 
-            // 6. 元のクリップボードを復元（設定されている場合）
+            // 7. 元のクリップボードを復元（設定されている場合）
             if (settings.RestoreClipboard && originalClipboard != null)
             {
                 await Task.Delay(100);
@@ -163,7 +171,7 @@ public class TextReplacementService
     {
         // 1. まず現在の折り返し行の行頭まで選択 (Shift + Home)
         SendShiftHome();
-        await Task.Delay(60);
+        await Task.Delay(35);
         string currentText = await TryCopyTextAsync();
 
         if (string.IsNullOrEmpty(currentText))
@@ -176,30 +184,27 @@ public class TextReplacementService
         {
             // 1文字左へ選択を広げてみる (Shift + Left)
             SendShiftLeft();
-            await Task.Delay(35);
+            await Task.Delay(20);
             string expandedText = await TryCopyTextAsync();
 
             // 長さが変わらない（これ以上左に行けない＝テキストの最先頭に達した）
-            if (expandedText.Length == currentText.Length)
+            if (string.IsNullOrEmpty(expandedText) || expandedText.Length == currentText.Length)
             {
                 break;
             }
 
-            // 新しく含まれた先頭文字をチェック
+            // 新しく含まれた先頭文字をチェック：改行であれば本来の行頭だったため1文字戻して即座に終了
             char firstChar = expandedText[0];
-            if (firstChar == '\n' || firstChar == '\r')
+            if (firstChar == '\r' || firstChar == '\n')
             {
-                // 直前の改行に達した！
-                // 改行自体は選択範囲から外すため、1文字右に戻す (Shift + Right)
                 SendShiftRight();
-                await Task.Delay(35);
+                await Task.Delay(20);
                 return currentText;
             }
 
-            // 改行ではない ＝ これは画面端での自動折り返し（ワードラップ）！
-            // その折り返し行の最先頭まで選択を伸ばす (Shift + Home)
+            // 先頭が改行文字でない＝自動折り返し（ワードラップ）の途中であるため、前の折り返し行の先頭まで一気に選択を広げる
             SendShiftHome();
-            await Task.Delay(35);
+            await Task.Delay(25);
             string lineText = await TryCopyTextAsync();
 
             if (string.IsNullOrEmpty(lineText) || lineText.Length <= expandedText.Length)

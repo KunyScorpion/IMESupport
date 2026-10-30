@@ -1,5 +1,8 @@
-using System.Net.Http.Headers;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using IMESupport.Models;
 
 namespace IMESupport.Services;
@@ -14,13 +17,27 @@ public class GeminiService
         Timeout = TimeSpan.FromSeconds(15)
     };
 
+    private static readonly Regex TargetSectionHeaderRegex = new(
+        @"【推敲対象テキスト[^】]*】\s*",
+        RegexOptions.Compiled);
+
+    private static readonly Regex LeadingBracketLabelRegex = new(
+        @"^(?:【[^】]+】\s*)+",
+        RegexOptions.Compiled);
+
     /// <summary>
     /// 指定されたテキストを Gemini API を使って推敲・誤変換修正する
     /// </summary>
     /// <param name="inputText">修正対象のテキスト</param>
     /// <param name="settings">アプリ設定</param>
-    /// <returns>修正後のテキスト（エラー時は原文またはnull）</returns>
-    public async Task<CorrectionResult> ProofreadAsync(string inputText, AppSettings settings)
+    /// <param name="analysis">キーストローク解析結果（省略時は内部で自動解析）</param>
+    /// <param name="recentContext">直前のセッション文脈テキスト（任意）</param>
+    /// <returns>修正後のテキスト（エラー時は原文またはエラー情報）</returns>
+    public async Task<CorrectionResult> ProofreadAsync(
+        string inputText,
+        AppSettings settings,
+        KeystrokeAnalysisResult? analysis = null,
+        string? recentContext = null)
     {
         if (string.IsNullOrWhiteSpace(inputText))
         {
@@ -44,6 +61,9 @@ public class GeminiService
             };
         }
 
+        analysis ??= KeystrokeAnalyzer.BuildAnalysisHint(inputText);
+        string userPrompt = BuildUserPrompt(inputText, analysis, recentContext);
+
         string modelName = string.IsNullOrWhiteSpace(settings.Model) ? "gemini-2.5-flash" : settings.Model.Trim();
         string url = $"https://generativelanguage.googleapis.com/v1beta/models/{modelName}:generateContent?key={settings.ApiKey.Trim()}";
 
@@ -65,7 +85,7 @@ public class GeminiService
                         role = "user",
                         parts = new[]
                         {
-                            new { text = inputText }
+                            new { text = userPrompt }
                         }
                     }
                 },
@@ -122,7 +142,7 @@ public class GeminiService
                 };
             }
 
-            // 余計な記号やコードブロックのクリーニング
+            // 余計な記号やコードブロック・ラベルのクリーニング
             string cleanedText = CleanResponse(resultText.Trim());
 
             return new CorrectionResult
@@ -155,10 +175,56 @@ public class GeminiService
     }
 
     /// <summary>
-    /// APIからの返答から余分な装飾（Markdownの引用やコードブロックなど）を剥がす
+    /// 推敲対象テキスト・キーストローク解析結果・直前文脈からユーザープロンプトを組み立てる
+    /// </summary>
+    public static string BuildUserPrompt(
+        string inputText,
+        KeystrokeAnalysisResult? analysis = null,
+        string? recentContext = null)
+    {
+        bool hasContext = !string.IsNullOrWhiteSpace(recentContext);
+        bool hasAnomaly = analysis is { HasAnomaly: true } && !string.IsNullOrWhiteSpace(analysis.EstimatedRomaji);
+
+        if (!hasContext && !hasAnomaly)
+        {
+            return inputText;
+        }
+
+        var sb = new StringBuilder();
+
+        if (hasContext)
+        {
+            sb.AppendLine("【直前の文脈（参考情報・出力に含めないこと）】");
+            sb.AppendLine(recentContext!.Trim());
+            sb.AppendLine();
+        }
+
+        if (hasAnomaly && analysis != null)
+        {
+            sb.AppendLine("【推定ローマ字打鍵列（タイポ復元ヒント）】");
+            sb.AppendLine($"読み還元: {analysis.ReadingText}");
+            sb.AppendLine($"推定打鍵: {analysis.EstimatedRomaji}");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("【推敲対象テキスト（この部分のみを修正して出力すること）】");
+        sb.Append(inputText);
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// APIからの返答から余分な装飾（Markdownの引用やコードブロック、オウム返しされたセクションラベルなど）を剥がす
     /// </summary>
     public static string CleanResponse(string text)
     {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        text = text.Trim();
+
         // 先頭・末尾の ``` や ```markdown を削除
         if (text.StartsWith("```") && text.EndsWith("```"))
         {
@@ -173,10 +239,21 @@ public class GeminiService
             }
         }
 
+        // 万が一 AI が【推敲対象テキスト...】のセクションごとオウム返しした場合、その見出し以降のみを抽出
+        Match targetMatch = TargetSectionHeaderRegex.Match(text);
+        if (targetMatch.Success)
+        {
+            text = text.Substring(targetMatch.Index + targetMatch.Length).Trim();
+        }
+
+        // 先頭に残った【修正後テキスト】や【出力】などの角括弧ラベルを除去
+        text = LeadingBracketLabelRegex.Replace(text, string.Empty).Trim();
+
         // 先頭・末尾の引用符を剥がす（誤って付けられた場合）
-        if ((text.StartsWith("「") && text.EndsWith("」")) ||
-            (text.StartsWith("\"") && text.EndsWith("\"")) ||
-            (text.StartsWith("“") && text.EndsWith("”")))
+        if (text.Length >= 2 &&
+            ((text.StartsWith("「") && text.EndsWith("」")) ||
+             (text.StartsWith("\"") && text.EndsWith("\"")) ||
+             (text.StartsWith("“") && text.EndsWith("”"))))
         {
             text = text.Substring(1, text.Length - 2);
         }

@@ -50,6 +50,36 @@ public static class HistoryManager
         }
     }
 
+    /// <summary>
+    /// 直近の推敲履歴からセッション文脈テキスト（古い順）を構築して取得します。
+    /// </summary>
+    /// <param name="maxCount">取得する最大件数（デフォルト3件）</param>
+    /// <param name="withinMinutes">有効とする直近の分数（デフォルト5分）</param>
+    /// <returns>直前の文脈テキスト（該当なしの場合は空文字列）</returns>
+    public static string GetRecentContext(int maxCount = 3, int withinMinutes = 5)
+    {
+        if (maxCount <= 0 || withinMinutes <= 0)
+        {
+            return string.Empty;
+        }
+
+        DateTime cutoff = DateTime.Now.AddMinutes(-withinMinutes);
+
+        lock (_lock)
+        {
+            var recentTexts = _items
+                .Where(item => item.Status != "エラー" &&
+                               !string.IsNullOrWhiteSpace(item.CorrectedText) &&
+                               item.Timestamp >= cutoff)
+                .Take(maxCount)
+                .Select(item => item.CorrectedText.Trim())
+                .Reverse()
+                .ToList();
+
+            return recentTexts.Count > 0 ? string.Join("\n", recentTexts) : string.Empty;
+        }
+    }
+
     public static void Clear()
     {
         lock (_lock)
