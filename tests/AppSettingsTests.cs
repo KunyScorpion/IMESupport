@@ -60,4 +60,29 @@ public class AppSettingsTests
         Assert.AreEqual("こんにちは", GeminiService.CleanResponse("\"こんにちは\""));
         Assert.AreEqual("こんにちは", GeminiService.CleanResponse("  こんにちは  "));
     }
+
+    [TestMethod]
+    public async Task ClipboardBackupAndRestore_OverwrittenClipboard_RestoresOriginalText()
+    {
+        const string originalText = "退避前のオリジナル文字列_12345";
+        const string tempText = "AI推敲中の一時文字列_99999";
+
+        // 1. 初期状態をセットして退避
+        await TextReplacementService.SetClipboardTextSafeAsync(originalText);
+        var snapshot = await TextReplacementService.BackupClipboardSafeAsync();
+        Assert.IsNotNull(snapshot);
+        Assert.AreEqual(originalText, snapshot.Text);
+
+        // 2. 推敲・置換処理と同様にクリップボードを別テキストで上書き
+        await TextReplacementService.SetClipboardTextSafeAsync(tempText);
+        string current = await TextReplacementService.GetClipboardTextSafeAsync();
+        Assert.AreEqual(tempText, current);
+
+        // 3. スナップショットから復元し、元の文字列に戻っているか検証
+        bool restored = await TextReplacementService.RestoreClipboardSafeAsync(snapshot);
+        Assert.IsTrue(restored);
+
+        string afterRestore = await TextReplacementService.GetClipboardTextSafeAsync();
+        Assert.AreEqual(originalText, afterRestore);
+    }
 }

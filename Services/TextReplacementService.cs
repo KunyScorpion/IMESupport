@@ -64,11 +64,11 @@ public class TextReplacementService
             // 1. 物理キーが離されるのを待つ
             await WaitForModifierKeysUpAsync();
 
-            // 2. 直前のクリップボード内容を退避
-            IDataObject? originalClipboard = null;
+            // 2. 直前のクリップボード内容を退避（実データをメモリへディープコピー）
+            ClipboardSnapshot? originalClipboard = null;
             if (settings.RestoreClipboard)
             {
-                originalClipboard = await GetClipboardDataObjectSafeAsync();
+                originalClipboard = await BackupClipboardSafeAsync();
             }
 
             // 3. テキスト取得を試行
@@ -338,10 +338,56 @@ public class TextReplacementService
 
     #endregion
 
-    #region クリップボード安全操作 (STAスレッド実行 & リトライ)
+    #region クリップボード安全操作 (メインSTAスレッド優先 & 実データスナップショット退避)
 
+    /// <summary>
+    /// クリップボードの実データをメモリ上に保持するスナップショットクラス
+    /// </summary>
+    public sealed class ClipboardSnapshot
+    {
+        public string? Text { get; set; }
+        public System.Windows.Media.Imaging.BitmapSource? Image { get; set; }
+        public System.Collections.Specialized.StringCollection? FileDropList { get; set; }
+        public Dictionary<string, object> ExtraFormats { get; } = new();
+
+        public bool IsEmpty =>
+            string.IsNullOrEmpty(Text) &&
+            Image == null &&
+            (FileDropList == null || FileDropList.Count == 0) &&
+            ExtraFormats.Count == 0;
+    }
+
+    // 追加で保持を試みるテキスト系リッチフォーマット
+    private static readonly string[] SafeExtraFormats =
+    [
+        DataFormats.Html,
+        DataFormats.Rtf,
+        DataFormats.CommaSeparatedValue
+    ];
+
+    /// <summary>
+    /// WPFのメインSTAスレッド（Dispatcher）が存在する場合は優先利用し、
+    /// 単体テスト環境など Application.Current が無い場合のみ専用STAスレッドで実行する
+    /// </summary>
     private static Task<T> RunOnStaThreadAsync<T>(Func<T> func)
     {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher != null && !dispatcher.HasShutdownStarted && !dispatcher.HasShutdownFinished)
+        {
+            if (dispatcher.CheckAccess())
+            {
+                try
+                {
+                    return Task.FromResult(func());
+                }
+                catch (Exception ex)
+                {
+                    return Task.FromException<T>(ex);
+                }
+            }
+            return dispatcher.InvokeAsync(func).Task;
+        }
+
         var tcs = new TaskCompletionSource<T>();
         var thread = new Thread(() =>
         {
@@ -360,81 +406,221 @@ public class TextReplacementService
         return tcs.Task;
     }
 
-    private static async Task<string> GetClipboardTextSafeAsync()
+    /// <summary>
+    /// Windows クリップボード履歴 (Win+V) やクラウド同期への登録を抑止するフラグを付与する
+    /// </summary>
+    private static void ApplyClipboardHistoryExclusionFlags(System.Windows.DataObject dataObj)
     {
-        return await RunOnStaThreadAsync(() =>
+        try
         {
-            for (int retry = 0; retry < 5; retry++)
+            dataObj.SetData("ExcludeClipboardContentFromMonitorProcessing", true);
+            dataObj.SetData("CanIncludeInClipboardHistory", 0);
+            dataObj.SetData("CanUploadToCloudClipboard", 0);
+        }
+        catch
+        {
+            // OS環境によりフォーマット登録が失敗しても本体処理には影響させない
+        }
+    }
+
+    internal static async Task<string> GetClipboardTextSafeAsync()
+    {
+        for (int retry = 0; retry < 5; retry++)
+        {
+            string? text = await RunOnStaThreadAsync<string?>(() =>
             {
                 try
                 {
+                    return Clipboard.ContainsText() ? Clipboard.GetText() : string.Empty;
+                }
+                catch
+                {
+                    return null;
+                }
+            });
+
+            if (text != null)
+            {
+                return text;
+            }
+            await Task.Delay(20);
+        }
+        return string.Empty;
+    }
+
+    internal static async Task<bool> SetClipboardTextSafeAsync(string text)
+    {
+        for (int retry = 0; retry < 5; retry++)
+        {
+            bool ok = await RunOnStaThreadAsync(() =>
+            {
+                try
+                {
+                    var dataObj = new System.Windows.DataObject();
+                    dataObj.SetText(text);
+                    ApplyClipboardHistoryExclusionFlags(dataObj);
+                    Clipboard.SetDataObject(dataObj, true);
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
+            });
+
+            if (ok)
+            {
+                return true;
+            }
+            await Task.Delay(20);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 現在のクリップボードから実データをメモリへ吸い出してスナップショットを作成する
+    /// </summary>
+    internal static async Task<ClipboardSnapshot?> BackupClipboardSafeAsync()
+    {
+        for (int retry = 0; retry < 5; retry++)
+        {
+            var snapshot = await RunOnStaThreadAsync<ClipboardSnapshot?>(() =>
+            {
+                try
+                {
+                    var snap = new ClipboardSnapshot();
+
                     if (Clipboard.ContainsText())
                     {
-                        return Clipboard.GetText();
+                        snap.Text = Clipboard.GetText();
                     }
+
+                    if (Clipboard.ContainsImage())
+                    {
+                        try
+                        {
+                            var img = Clipboard.GetImage();
+                            if (img != null)
+                            {
+                                if (img.CanFreeze) img.Freeze();
+                                snap.Image = img;
+                            }
+                        }
+                        catch { }
+                    }
+
+                    if (Clipboard.ContainsFileDropList())
+                    {
+                        try
+                        {
+                            var files = Clipboard.GetFileDropList();
+                            if (files != null && files.Count > 0)
+                            {
+                                snap.FileDropList = files;
+                            }
+                        }
+                        catch { }
+                    }
+
+                    IDataObject? current = Clipboard.GetDataObject();
+                    if (current != null)
+                    {
+                        foreach (string format in SafeExtraFormats)
+                        {
+                            try
+                            {
+                                if (current.GetDataPresent(format, false))
+                                {
+                                    object? data = current.GetData(format, false);
+                                    if (data != null)
+                                    {
+                                        snap.ExtraFormats[format] = data;
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+
+                    return snap;
                 }
                 catch
                 {
-                    Thread.Sleep(20);
+                    return null;
                 }
+            });
+
+            if (snapshot != null)
+            {
+                return snapshot;
             }
-            return string.Empty;
-        });
+            await Task.Delay(20);
+        }
+        return null;
     }
 
-    private static async Task<bool> SetClipboardTextSafeAsync(string text)
+    /// <summary>
+    /// 退避したスナップショットから新しい DataObject を構築してクリップボードへ復元する
+    /// </summary>
+    internal static async Task<bool> RestoreClipboardSafeAsync(ClipboardSnapshot snapshot)
     {
-        return await RunOnStaThreadAsync(() =>
+        for (int retry = 0; retry < 5; retry++)
         {
-            for (int retry = 0; retry < 5; retry++)
+            bool restored = await RunOnStaThreadAsync(() =>
             {
                 try
                 {
-                    Clipboard.SetText(text);
+                    if (snapshot.IsEmpty)
+                    {
+                        Clipboard.Clear();
+                        return true;
+                    }
+
+                    var dataObj = new System.Windows.DataObject();
+
+                    if (!string.IsNullOrEmpty(snapshot.Text))
+                    {
+                        dataObj.SetText(snapshot.Text);
+                    }
+
+                    if (snapshot.Image != null)
+                    {
+                        dataObj.SetImage(snapshot.Image);
+                    }
+
+                    if (snapshot.FileDropList != null && snapshot.FileDropList.Count > 0)
+                    {
+                        dataObj.SetFileDropList(snapshot.FileDropList);
+                    }
+
+                    foreach (var kvp in snapshot.ExtraFormats)
+                    {
+                        try
+                        {
+                            dataObj.SetData(kvp.Key, kvp.Value);
+                        }
+                        catch { }
+                    }
+
+                    // 復元時の再セットでもクリップボード履歴が重複登録されないようにする
+                    ApplyClipboardHistoryExclusionFlags(dataObj);
+
+                    Clipboard.SetDataObject(dataObj, true);
                     return true;
                 }
                 catch
                 {
-                    Thread.Sleep(20);
+                    return false;
                 }
-            }
-            return false;
-        });
-    }
+            });
 
-    private static async Task<IDataObject?> GetClipboardDataObjectSafeAsync()
-    {
-        return await RunOnStaThreadAsync(() =>
-        {
-            try
+            if (restored)
             {
-                return Clipboard.GetDataObject();
+                return true;
             }
-            catch
-            {
-                return null;
-            }
-        });
-    }
-
-    private static async Task RestoreClipboardSafeAsync(IDataObject original)
-    {
-        await RunOnStaThreadAsync(() =>
-        {
-            for (int retry = 0; retry < 3; retry++)
-            {
-                try
-                {
-                    Clipboard.SetDataObject(original, true);
-                    return true;
-                }
-                catch
-                {
-                    Thread.Sleep(20);
-                }
-            }
-            return false;
-        });
+            await Task.Delay(30);
+        }
+        return false;
     }
 
     #endregion
