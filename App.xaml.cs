@@ -70,7 +70,12 @@ public partial class App : Application
 
         // 3. サービス初期化
         _geminiService = new GeminiService();
-        _replacementService = new TextReplacementService(_geminiService);
+        _replacementService = new TextReplacementService(_geminiService)
+        {
+            CandidateSelector = (originalText, candidates) =>
+                Dispatcher.InvokeAsync(() =>
+                    new CandidatePopupWindow().ShowCandidatesAsync(originalText, candidates)).Task.Unwrap()
+        };
         _hookService = new KeyboardHookService();
 
         // 4. イベント配線
@@ -84,7 +89,8 @@ public partial class App : Application
             _settings,
             _hookService,
             OpenSettingsWindow,
-            OpenHistoryWindow);
+            OpenHistoryWindow,
+            OnTraySettingsChanged);
 
         // 6. キー監視開始
         _hookService.Start(_settings);
@@ -149,15 +155,19 @@ public partial class App : Application
 
     private void OnProcessingCompleted(CorrectionResult result)
     {
-        LogDebug($"推敲処理完了: Success={result.Success}, HasChanged={result.HasChanged}, Original='{result.OriginalText}', Corrected='{result.CorrectedText}'");
+        LogDebug($"推敲処理完了: Success={result.Success}, IsCancelled={result.IsCancelled}, HasChanged={result.HasChanged}, Original='{result.OriginalText}', Corrected='{result.CorrectedText}'");
         Dispatcher.Invoke(() =>
         {
+            string status = !result.Success
+                ? "エラー"
+                : (result.IsCancelled ? "キャンセル" : (result.HasChanged ? "修正完了" : "修正不要"));
+
             // 履歴に記録
             HistoryManager.Add(new HistoryItem
             {
                 OriginalText = result.OriginalText,
                 CorrectedText = result.CorrectedText,
-                Status = result.Success ? (result.HasChanged ? "修正完了" : "修正不要") : "エラー",
+                Status = status,
                 Model = _settings.Model
             });
 
@@ -169,6 +179,10 @@ public partial class App : Application
                 {
                     _trayManager.ShowNotification("推敲エラー", errMsg, ToolTipIcon.Warning);
                 }
+            }
+            else if (result.IsCancelled)
+            {
+                _trayManager.SetStatus(AppStatus.NoChange, "IMESupport: 候補選択がキャンセルされました");
             }
             else if (result.HasChanged)
             {
@@ -199,11 +213,24 @@ public partial class App : Application
         return text.Length > max ? text.Substring(0, max) + "..." : text;
     }
 
+    private void OnTraySettingsChanged()
+    {
+        Dispatcher.Invoke(() =>
+        {
+            _settingsWindow?.RefreshFromSettings();
+        });
+    }
+
     private void OpenSettingsWindow()
     {
         if (_settingsWindow == null || !_settingsWindow.IsLoaded)
         {
             _settingsWindow = new SettingsWindow(_settings, _geminiService, _hookService);
+            _settingsWindow.SettingsSaved += () => _trayManager.SyncMenuStates();
+        }
+        else
+        {
+            _settingsWindow.RefreshFromSettings();
         }
 
         _settingsWindow.Show();

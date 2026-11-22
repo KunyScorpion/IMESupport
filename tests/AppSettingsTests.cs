@@ -13,6 +13,9 @@ public class AppSettingsTests
         var settings = new AppSettings();
 
         Assert.AreEqual("gemini-2.5-flash", settings.Model);
+        Assert.AreEqual("LOW", settings.ThinkingLevel);
+        Assert.IsFalse(settings.EnableCandidatePopup);
+        Assert.AreEqual(string.Empty, settings.CustomDictionaryRules);
         Assert.AreEqual(350, settings.DoubleTapIntervalMs);
         Assert.AreEqual(0x1C, settings.TriggerVirtualKey); // VK_CONVERT
         Assert.AreEqual("Convert", settings.TriggerKeyType);
@@ -49,6 +52,42 @@ public class AppSettingsTests
             CorrectedText = "変換"
         };
         Assert.IsFalse(resultFailed.HasChanged);
+
+        var resultCancelled = new CorrectionResult
+        {
+            Success = true,
+            IsCancelled = true,
+            OriginalText = "変改",
+            CorrectedText = "変換"
+        };
+        Assert.IsFalse(resultCancelled.HasChanged);
+    }
+
+    [TestMethod]
+    public void GetEffectiveSystemPrompt_HandlesEmptyWhitespaceAndCustomRules()
+    {
+        var settingsEmpty = new AppSettings
+        {
+            SystemPrompt = "基本プロンプト",
+            CustomDictionaryRules = string.Empty
+        };
+        Assert.AreEqual("基本プロンプト", settingsEmpty.GetEffectiveSystemPrompt());
+
+        var settingsWhitespace = new AppSettings
+        {
+            SystemPrompt = "基本プロンプト",
+            CustomDictionaryRules = "   \r\n\t  "
+        };
+        Assert.AreEqual("基本プロンプト", settingsWhitespace.GetEffectiveSystemPrompt());
+
+        var settingsWithRules = new AppSettings
+        {
+            SystemPrompt = "基本プロンプト\n\n",
+            CustomDictionaryRules = "  主人公名は『蒼真』  "
+        };
+        Assert.AreEqual(
+            "基本プロンプト\n\n【ユーザー定義の固有名詞・表記ゆれ統一ルール（最優先で遵守すること）】\n主人公名は『蒼真』",
+            settingsWithRules.GetEffectiveSystemPrompt());
     }
 
     [TestMethod]

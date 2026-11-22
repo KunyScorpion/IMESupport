@@ -1,0 +1,150 @@
+<Window x:Class="IMESupport.UI.CandidatePopupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AI修正候補"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        WindowStartupLocation="Manual"
+        Width="440"
+        SizeToContent="Height"
+        MaxHeight="420"
+        FontFamily="Segoe UI, Yu Gothic UI, Meiryo"
+        Focusable="True"
+        InputMethod.IsInputMethodEnabled="False"
+        PreviewKeyDown="Window_PreviewKeyDown">
+
+    <Border Margin="10"
+            Background="#FFFFFF"
+            BorderBrush="#CBD5E1"
+            BorderThickness="1"
+            CornerRadius="10">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="14"
+                              ShadowDepth="3"
+                              Opacity="0.18"
+                              Color="#0F172A"/>
+        </Border.Effect>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- ヘッダー（タイトル＋原文プレビュー） -->
+            <Border Grid.Row="0"
+                    Background="#F8FAFC"
+                    BorderBrush="#E2E8F0"
+                    BorderThickness="0,0,0,1"
+                    CornerRadius="10,10,0,0"
+                    Padding="12,8">
+                <StackPanel>
+                    <TextBlock Text="✨ AI修正候補"
+                               FontSize="12"
+                               FontWeight="Bold"
+                               Foreground="#1E293B"/>
+                    <TextBlock x:Name="TxtOriginalPreview"
+                               FontSize="11"
+                               Foreground="#64748B"
+                               TextTrimming="CharacterEllipsis"
+                               Margin="0,2,0,0"/>
+                </StackPanel>
+            </Border>
+
+            <!-- 候補リスト -->
+            <ListBox x:Name="LbCandidates"
+                     Grid.Row="1"
+                     BorderThickness="0"
+                     Background="Transparent"
+                     Padding="6"
+                     SelectionMode="Single"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     MaxHeight="280">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="Padding" Value="8,7"/>
+                        <Setter Property="Margin" Value="0,2"/>
+                        <Setter Property="Cursor" Value="Hand"/>
+                        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                        <EventSetter Event="PreviewMouseLeftButtonDown" Handler="ListBoxItem_PreviewMouseLeftButtonDown"/>
+                        <EventSetter Event="PreviewMouseLeftButtonUp" Handler="ListBoxItem_PreviewMouseLeftButtonUp"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="ItemBorder"
+                                            Background="Transparent"
+                                            BorderBrush="Transparent"
+                                            BorderThickness="1"
+                                            CornerRadius="6"
+                                            Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="ItemBorder" Property="Background" Value="#EFF6FF"/>
+                                        </Trigger>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="ItemBorder" Property="Background" Value="#DBEAFE"/>
+                                            <Setter TargetName="ItemBorder" Property="BorderBrush" Value="#3B82F6"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Column="0"
+                                    Background="#3B82F6"
+                                    CornerRadius="4"
+                                    Padding="6,2"
+                                    Margin="0,1,8,0"
+                                    VerticalAlignment="Top">
+                                <TextBlock Text="{Binding NumberLabel}"
+                                           Foreground="White"
+                                           FontSize="11"
+                                           FontWeight="Bold"/>
+                            </Border>
+
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding Text}"
+                                       FontSize="13"
+                                       Foreground="#0F172A"
+                                       TextWrapping="Wrap"
+                                       LineHeight="19"
+                                       VerticalAlignment="Center"/>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <!-- 操作ヒントフッター -->
+            <Border Grid.Row="2"
+                    Background="#F8FAFC"
+                    BorderBrush="#E2E8F0"
+                    BorderThickness="0,1,0,0"
+                    CornerRadius="0,0,10,10"
+                    Padding="12,6">
+                <TextBlock Text="[1-3 / Enter] 決定   [↑↓] 移動   [Esc] キャンセル"
+                           FontSize="11"
+                           Foreground="#64748B"
+                           HorizontalAlignment="Center"/>
+            </Border>
+        </Grid>
+    </Border>
+</Window>

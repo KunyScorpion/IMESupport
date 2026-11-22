@@ -14,8 +14,19 @@ public class HistoryItem
 
     public string FormattedTime => Timestamp.ToString("HH:mm:ss");
 
-    public string DisplayStatus => HasChanged ? "✨ 修正あり" : (Status == "エラー" ? "⚠️ エラー" : "修正なし");
-    public string StatusBadgeColor => HasChanged ? "#10B981" : (Status == "エラー" ? "#EF4444" : "#9CA3AF");
+    public string DisplayStatus => Status switch
+    {
+        "エラー" => "⚠️ エラー",
+        "キャンセル" => "⏹️ キャンセル",
+        _ => HasChanged ? "✨ 修正あり" : "修正なし"
+    };
+
+    public string StatusBadgeColor => Status switch
+    {
+        "エラー" => "#EF4444",
+        "キャンセル" => "#6B7280",
+        _ => HasChanged ? "#10B981" : "#9CA3AF"
+    };
 }
 
 /// <summary>
@@ -69,6 +80,7 @@ public static class HistoryManager
         {
             var recentTexts = _items
                 .Where(item => item.Status != "エラー" &&
+                               item.Status != "キャンセル" &&
                                !string.IsNullOrWhiteSpace(item.CorrectedText) &&
                                item.Timestamp >= cutoff)
                 .Take(maxCount)

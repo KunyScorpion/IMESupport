@@ -22,9 +22,24 @@ public class AppSettings
     public string ApiKey { get; set; } = string.Empty;
 
     /// <summary>
-    /// 使用する Gemini モデル名（例: gemini-2.5-flash, gemini-2.0-flash, gemini-3.5-flash-lite 等）
+    /// 使用する Gemini モデル名（例: gemini-4-hydrogen, gemini-2.5-flash, gemini-3.5-flash-lite 等）
     /// </summary>
     public string Model { get; set; } = "gemini-2.5-flash";
+
+    /// <summary>
+    /// 思考レベル（Gemini 3 / 4 系モデル向け: MINIMAL, LOW, MEDIUM, HIGH 等）
+    /// </summary>
+    public string ThinkingLevel { get; set; } = "LOW";
+
+    /// <summary>
+    /// ポップアップで複数の修正候補から選択するモードを有効にするか
+    /// </summary>
+    public bool EnableCandidatePopup { get; set; } = false;
+
+    /// <summary>
+    /// ユーザー定義の固有名詞・表記ゆれ統一ルール
+    /// </summary>
+    public string CustomDictionaryRules { get; set; } = string.Empty;
 
     /// <summary>
     /// ダブルタップ判定の最大間隔（ミリ秒）
@@ -146,6 +161,8 @@ public class AppSettings
                     {
                         settings.SystemPrompt = DefaultPrompt;
                     }
+                    settings.ThinkingLevel ??= "LOW";
+                    settings.CustomDictionaryRules ??= string.Empty;
                     return settings;
                 }
             }
@@ -156,6 +173,20 @@ public class AppSettings
         }
 
         return new AppSettings();
+    }
+
+    /// <summary>
+    /// 固有名詞・表記ゆれ統一ルールを結合した有効なシステムプロンプトを取得する
+    /// </summary>
+    public string GetEffectiveSystemPrompt()
+    {
+        string basePrompt = SystemPrompt ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(CustomDictionaryRules))
+        {
+            return basePrompt;
+        }
+
+        return $"{basePrompt.TrimEnd()}\n\n【ユーザー定義の固有名詞・表記ゆれ統一ルール（最優先で遵守すること）】\n{CustomDictionaryRules.Trim()}";
     }
 
     private static string NormalizeLineEndings(string text)

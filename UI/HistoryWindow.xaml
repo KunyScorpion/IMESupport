@@ -32,7 +32,7 @@
                 <ListView.View>
                     <GridView>
                         <GridViewColumn Header="時刻" Width="70" DisplayMemberBinding="{Binding FormattedTime}"/>
-                        <GridViewColumn Header="状態" Width="95">
+                        <GridViewColumn Header="状態" Width="105">
                             <GridViewColumn.CellTemplate>
                                 <DataTemplate>
                                     <Border Background="{Binding StatusBadgeColor}" CornerRadius="4" Padding="6,2" HorizontalAlignment="Left">

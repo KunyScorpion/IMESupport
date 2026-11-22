@@ -29,9 +29,11 @@ public class TrayIconManager : IDisposable
     private readonly KeyboardHookService _hookService;
     private readonly Action _openSettingsAction;
     private readonly Action _openHistoryAction;
+    private readonly Action? _onSettingsChanged;
 
     private readonly System.Windows.Forms.Timer _resetTimer;
     private ToolStripMenuItem? _pauseMenuItem;
+    private ToolStripMenuItem? _candidatePopupMenuItem;
     private ToolStripMenuItem? _startupMenuItem;
     private ToolStripMenuItem? _notificationMenuItem;
 
@@ -41,12 +43,14 @@ public class TrayIconManager : IDisposable
         AppSettings settings,
         KeyboardHookService hookService,
         Action openSettingsAction,
-        Action openHistoryAction)
+        Action openHistoryAction,
+        Action? onSettingsChanged = null)
     {
         _settings = settings;
         _hookService = hookService;
         _openSettingsAction = openSettingsAction;
         _openHistoryAction = openHistoryAction;
+        _onSettingsChanged = onSettingsChanged;
 
         _resetTimer = new System.Windows.Forms.Timer
         {
@@ -77,6 +81,7 @@ public class TrayIconManager : IDisposable
     private void InitializeContextMenu()
     {
         var contextMenu = new ContextMenuStrip();
+        contextMenu.Opening += (s, e) => SyncMenuStates();
 
         // タイトル
         var titleItem = new ToolStripMenuItem("IMESupport (AI日本語入力支援)")
@@ -108,6 +113,21 @@ public class TrayIconManager : IDisposable
         _pauseMenuItem.Checked = _hookService.IsPaused;
         contextMenu.Items.Add(_pauseMenuItem);
 
+        // ポップアップ候補表示モードトグル
+        _candidatePopupMenuItem = new ToolStripMenuItem("💡 ポップアップで候補選択(&C)", null, (s, e) =>
+        {
+            if (s is ToolStripMenuItem item)
+            {
+                bool next = !item.Checked;
+                item.Checked = next;
+                _settings.EnableCandidatePopup = next;
+                _settings.Save();
+                _onSettingsChanged?.Invoke();
+            }
+        });
+        _candidatePopupMenuItem.Checked = _settings.EnableCandidatePopup;
+        contextMenu.Items.Add(_candidatePopupMenuItem);
+
         // デスクトップ通知トグル（必要な場合のみ）
         _notificationMenuItem = new ToolStripMenuItem("🔔 デスクトップ通知を表示(&N)", null, (s, e) =>
         {
@@ -117,6 +137,7 @@ public class TrayIconManager : IDisposable
                 item.Checked = next;
                 _settings.ShowNotification = next;
                 _settings.Save();
+                _onSettingsChanged?.Invoke();
             }
         });
         _notificationMenuItem.Checked = _settings.ShowNotification;
@@ -133,6 +154,7 @@ public class TrayIconManager : IDisposable
             {
                 _startupMenuItem.Checked = !current;
             }
+            _onSettingsChanged?.Invoke();
         });
         _startupMenuItem.Checked = StartupManager.IsStartupEnabled();
         contextMenu.Items.Add(_startupMenuItem);
@@ -176,6 +198,29 @@ public class TrayIconManager : IDisposable
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"アイコン更新エラー: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 現在の設定・一時停止状態に合わせてトレイメニューのチェック状態を同期する
+    /// </summary>
+    public void SyncMenuStates()
+    {
+        if (_pauseMenuItem != null)
+        {
+            _pauseMenuItem.Checked = _hookService.IsPaused;
+        }
+        if (_candidatePopupMenuItem != null)
+        {
+            _candidatePopupMenuItem.Checked = _settings.EnableCandidatePopup;
+        }
+        if (_notificationMenuItem != null)
+        {
+            _notificationMenuItem.Checked = _settings.ShowNotification;
+        }
+        if (_startupMenuItem != null)
+        {
+            _startupMenuItem.Checked = StartupManager.IsStartupEnabled();
         }
     }
 

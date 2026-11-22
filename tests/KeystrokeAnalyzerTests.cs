@@ -109,4 +109,53 @@ public class KeystrokeAnalyzerTests
 
         HistoryManager.Clear();
     }
+
+    [TestMethod]
+    public void HistoryManager_GetRecentContext_ExcludesCancelledItems()
+    {
+        HistoryManager.Clear();
+
+        HistoryManager.Add(new HistoryItem
+        {
+            Timestamp = DateTime.Now.AddMinutes(-2),
+            OriginalText = "有効な文脈1",
+            CorrectedText = "有効な文脈1。",
+            Status = "修正完了"
+        });
+
+        HistoryManager.Add(new HistoryItem
+        {
+            Timestamp = DateTime.Now.AddMinutes(-1),
+            OriginalText = "キャンセルされた未修正テキスト",
+            CorrectedText = "キャンセルされた未修正テキスト",
+            Status = "キャンセル"
+        });
+
+        HistoryManager.Add(new HistoryItem
+        {
+            Timestamp = DateTime.Now,
+            OriginalText = "有効な文脈2",
+            CorrectedText = "有効な文脈2。",
+            Status = "修正不要"
+        });
+
+        string context = HistoryManager.GetRecentContext(maxCount: 3, withinMinutes: 5);
+        Assert.AreEqual("有効な文脈1。\n有効な文脈2。", context);
+
+        HistoryManager.Clear();
+    }
+
+    [TestMethod]
+    public void HistoryItem_CancelledStatus_DisplaysExpectedBadgeAndColor()
+    {
+        var item = new HistoryItem
+        {
+            OriginalText = "テスト",
+            CorrectedText = "テスト",
+            Status = "キャンセル"
+        };
+
+        Assert.AreEqual("⏹️ キャンセル", item.DisplayStatus);
+        Assert.AreEqual("#6B7280", item.StatusBadgeColor);
+    }
 }

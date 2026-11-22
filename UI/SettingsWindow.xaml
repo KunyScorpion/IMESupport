@@ -105,12 +105,23 @@
 
                         <TextBlock Text="使用モデル:" Margin="0,0,0,4" FontWeight="Medium"/>
                         <ComboBox x:Name="CmbModel" IsEditable="True" Height="32" Margin="0,0,0,8">
-                            <ComboBoxItem Content="gemini-3.5-flash-lite" IsSelected="True"/>
+                            <ComboBoxItem Content="gemini-4-hydrogen"/>
+                            <ComboBoxItem Content="gemini-4-neon"/>
+                            <ComboBoxItem Content="gemini-3.5-flash-lite"/>
                             <ComboBoxItem Content="gemini-2.5-flash"/>
                             <ComboBoxItem Content="gemini-2.0-flash"/>
                             <ComboBoxItem Content="gemini-1.5-flash"/>
                         </ComboBox>
                         <TextBlock Text="※ リストにないモデル名も直接入力して指定可能です。" FontSize="11" Foreground="#6B7280" Margin="0,0,0,10"/>
+
+                        <TextBlock Text="思考レベル (Thinking Level):" Margin="0,0,0,4" FontWeight="Medium"/>
+                        <ComboBox x:Name="CmbThinkingLevel" Height="32" Margin="0,0,0,4">
+                            <ComboBoxItem Content="MINIMAL（最速・3.5 Flash-Lite向け）" Tag="MINIMAL"/>
+                            <ComboBoxItem Content="LOW（推奨・Hydrogen向け）" Tag="LOW"/>
+                            <ComboBoxItem Content="MEDIUM（高精度）" Tag="MEDIUM"/>
+                            <ComboBoxItem Content="HIGH（深い推論）" Tag="HIGH"/>
+                        </ComboBox>
+                        <TextBlock Text="※ Gemini 3 / 4 系モデル使用時に適用されます（旧モデルでは自動省略）。" FontSize="11" Foreground="#6B7280" Margin="0,0,0,10"/>
 
                         <Button x:Name="BtnTestApi" Content="🔌 API接続テスト" HorizontalAlignment="Left" Background="#10B981" Click="BtnTestApi_Click"/>
                         <TextBlock x:Name="TxtApiStatus" Margin="0,6,0,0" FontSize="12"/>
@@ -158,6 +169,8 @@
                 <!-- 動作オプション -->
                 <GroupBox Header="⚙️ 動作オプション">
                     <StackPanel TextElement.FontWeight="Normal">
+                        <CheckBox x:Name="ChkEnableCandidatePopup" Content="直接置換せず、ポップアップで複数の修正候補から選択する" Margin="0,0,0,2"/>
+                        <TextBlock Text="※ オンにすると最大3つの言い換え・修正候補を表示し、数字キーやクリックで選べます。" FontSize="11" Foreground="#6B7280" Margin="20,0,0,8"/>
                         <CheckBox x:Name="ChkAutoSelectLine" Content="テキスト未選択時、カーソル直前の一行を自動で推敲対象にする" Margin="0,0,0,8" IsChecked="True"/>
                         <CheckBox x:Name="ChkShowNotification" Content="推敲・置換完了時やエラー時にデスクトップ通知を表示する（確認用）" Margin="0,0,0,2"/>
                         <TextBlock Text="※ チェックを外すと、通知を出さずに静かに直接置換します（おすすめ）。" FontSize="11" Foreground="#6B7280" Margin="20,0,0,8"/>
@@ -176,6 +189,33 @@
                         
                         <TextBlock Text="推敲結果:" Margin="0,4,0,4" FontWeight="Medium"/>
                         <TextBox x:Name="TbTestOutput" Height="60" TextWrapping="Wrap" AcceptsReturn="True" IsReadOnly="True" Background="#F9FAFB"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- 固有名詞・表記ゆれルール -->
+                <GroupBox Header="📖 固有名詞・表記ゆれルール（任意）">
+                    <StackPanel TextElement.FontWeight="Normal">
+                        <TextBlock Text="小説や長文執筆で維持したい固有名詞・語尾・記号ルールを記述すると、AIへ最優先で指示されます。" FontSize="11" Foreground="#6B7280" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                        <Grid>
+                            <TextBox x:Name="TbCustomRules" Height="90" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" FontSize="12"/>
+                            <TextBlock Text="例：主人公名は『蒼真』、一人称は『俺』、三点リーダーは『……』を2つ連続させる"
+                                       Margin="10,7,10,7"
+                                       Foreground="#9CA3AF"
+                                       FontSize="12"
+                                       TextWrapping="Wrap"
+                                       IsHitTestVisible="False">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Text, ElementName=TbCustomRules}" Value="">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
                     </StackPanel>
                 </GroupBox>
 

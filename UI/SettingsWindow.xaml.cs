@@ -18,6 +18,11 @@ public partial class SettingsWindow : Window
     private bool _isApiKeyVisible = false;
     private bool _isInitializing = true;
 
+    /// <summary>
+    /// 設定が保存されたときに発火するイベント（トレイメニュー等との状態同期用）
+    /// </summary>
+    public event Action? SettingsSaved;
+
     public SettingsWindow(AppSettings settings, GeminiService geminiService, KeyboardHookService hookService)
     {
         InitializeComponent();
@@ -44,12 +49,29 @@ public partial class SettingsWindow : Window
         });
     }
 
+    /// <summary>
+    /// 外部（トレイメニュー等）から設定が変更された場合にUI表示を最新化する
+    /// </summary>
+    public void RefreshFromSettings()
+    {
+        _isInitializing = true;
+        try
+        {
+            LoadSettingsToUi();
+        }
+        finally
+        {
+            _isInitializing = false;
+        }
+    }
+
     private void LoadSettingsToUi()
     {
         PbApiKey.Password = _settings.ApiKey;
         TbApiKeyVisible.Text = _settings.ApiKey;
 
         CmbModel.Text = _settings.Model;
+        SelectThinkingLevel(_settings.ThinkingLevel);
         SldInterval.Value = _settings.DoubleTapIntervalMs;
 
         // トリガーキー選択の同期
@@ -67,18 +89,57 @@ public partial class SettingsWindow : Window
             CmbTriggerKey.SelectedIndex = 0;
         }
 
+        ChkEnableCandidatePopup.IsChecked = _settings.EnableCandidatePopup;
         ChkAutoSelectLine.IsChecked = _settings.AutoSelectLineWhenEmpty;
         ChkShowNotification.IsChecked = _settings.ShowNotification;
         ChkRestoreClipboard.IsChecked = _settings.RestoreClipboard;
         ChkAutoStart.IsChecked = StartupManager.IsStartupEnabled();
 
+        TbCustomRules.Text = _settings.CustomDictionaryRules;
         TbPrompt.Text = _settings.SystemPrompt;
+    }
+
+    private void SelectThinkingLevel(string? thinkingLevel)
+    {
+        string target = string.IsNullOrWhiteSpace(thinkingLevel) ? "LOW" : thinkingLevel.Trim();
+        int fallbackIndex = -1;
+
+        for (int i = 0; i < CmbThinkingLevel.Items.Count; i++)
+        {
+            if (CmbThinkingLevel.Items[i] is ComboBoxItem item)
+            {
+                string? tag = item.Tag?.ToString();
+                if (string.Equals(tag, target, StringComparison.OrdinalIgnoreCase))
+                {
+                    CmbThinkingLevel.SelectedIndex = i;
+                    return;
+                }
+                if (string.Equals(tag, "LOW", StringComparison.OrdinalIgnoreCase))
+                {
+                    fallbackIndex = i;
+                }
+            }
+        }
+
+        CmbThinkingLevel.SelectedIndex = fallbackIndex >= 0 ? fallbackIndex : 0;
+    }
+
+    private string GetSelectedThinkingLevel()
+    {
+        if (CmbThinkingLevel.SelectedItem is ComboBoxItem item &&
+            item.Tag?.ToString() is string tag &&
+            !string.IsNullOrWhiteSpace(tag))
+        {
+            return tag;
+        }
+        return "LOW";
     }
 
     private void SaveUiToSettings()
     {
         _settings.ApiKey = _isApiKeyVisible ? TbApiKeyVisible.Text.Trim() : PbApiKey.Password.Trim();
         _settings.Model = string.IsNullOrWhiteSpace(CmbModel.Text) ? "gemini-3.5-flash-lite" : CmbModel.Text.Trim();
+        _settings.ThinkingLevel = GetSelectedThinkingLevel();
         _settings.DoubleTapIntervalMs = (int)SldInterval.Value;
 
         if (CmbTriggerKey.SelectedItem is ComboBoxItem selectedItem)
@@ -95,9 +156,11 @@ public partial class SettingsWindow : Window
             };
         }
 
+        _settings.EnableCandidatePopup = ChkEnableCandidatePopup.IsChecked ?? false;
         _settings.AutoSelectLineWhenEmpty = ChkAutoSelectLine.IsChecked ?? true;
         _settings.ShowNotification = ChkShowNotification.IsChecked ?? true;
         _settings.RestoreClipboard = ChkRestoreClipboard.IsChecked ?? true;
+        _settings.CustomDictionaryRules = TbCustomRules.Text;
         _settings.SystemPrompt = TbPrompt.Text;
 
         bool autoStart = ChkAutoStart.IsChecked ?? false;
@@ -106,6 +169,7 @@ public partial class SettingsWindow : Window
 
         _settings.Save();
         _hookService.UpdateSettings(_settings);
+        SettingsSaved?.Invoke();
     }
 
     private void CmbTriggerKey_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -140,6 +204,18 @@ public partial class SettingsWindow : Window
         }
     }
 
+    private AppSettings CreateTempSettings(string apiKey)
+    {
+        return new AppSettings
+        {
+            ApiKey = apiKey,
+            Model = string.IsNullOrWhiteSpace(CmbModel.Text) ? "gemini-3.5-flash-lite" : CmbModel.Text.Trim(),
+            ThinkingLevel = GetSelectedThinkingLevel(),
+            CustomDictionaryRules = TbCustomRules.Text,
+            SystemPrompt = TbPrompt.Text
+        };
+    }
+
     private async void BtnTestApi_Click(object sender, RoutedEventArgs e)
     {
         string apiKey = _isApiKeyVisible ? TbApiKeyVisible.Text.Trim() : PbApiKey.Password.Trim();
@@ -154,12 +230,7 @@ public partial class SettingsWindow : Window
         TxtApiStatus.Text = "⏳ 接続テスト中...";
         TxtApiStatus.Foreground = new SolidColorBrush(Color.FromRgb(59, 130, 246));
 
-        var tempSettings = new AppSettings
-        {
-            ApiKey = apiKey,
-            Model = string.IsNullOrWhiteSpace(CmbModel.Text) ? "gemini-3.5-flash-lite" : CmbModel.Text.Trim(),
-            SystemPrompt = TbPrompt.Text
-        };
+        var tempSettings = CreateTempSettings(apiKey);
 
         var result = await _geminiService.ProofreadAsync("テスト確認", tempSettings);
 
@@ -196,12 +267,7 @@ public partial class SettingsWindow : Window
         BtnRunTest.IsEnabled = false;
         TbTestOutput.Text = "AIが推敲・修正中...";
 
-        var tempSettings = new AppSettings
-        {
-            ApiKey = apiKey,
-            Model = string.IsNullOrWhiteSpace(CmbModel.Text) ? "gemini-3.5-flash-lite" : CmbModel.Text.Trim(),
-            SystemPrompt = TbPrompt.Text
-        };
+        var tempSettings = CreateTempSettings(apiKey);
 
         var analysis = KeystrokeAnalyzer.BuildAnalysisHint(inputText);
         var result = await _geminiService.ProofreadAsync(inputText, tempSettings, analysis);

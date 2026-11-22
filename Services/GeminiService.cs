@@ -14,8 +14,11 @@ public class GeminiService
 {
     private static readonly HttpClient HttpClient = new()
     {
-        Timeout = TimeSpan.FromSeconds(15)
+        Timeout = TimeSpan.FromSeconds(30)
     };
+
+    private const string CandidateOverrideInstruction =
+        "【出力形式の上書き指示】\n誤字脱字修正に加え、文脈に即した自然な表現のバリエーションを含めて最大3つの候補を作成し、JSON文字列配列（例: [\"候補1\", \"候補2\", \"候補3\"]）のみで出力すること（既存の単一出力制約よりこの形式を優先する）。";
 
     private static readonly Regex TargetSectionHeaderRegex = new(
         @"【推敲対象テキスト[^】]*】\s*",
@@ -24,6 +27,115 @@ public class GeminiService
     private static readonly Regex LeadingBracketLabelRegex = new(
         @"^(?:【[^】]+】\s*)+",
         RegexOptions.Compiled);
+
+    /// <summary>
+    /// 指定モデルが thinkingLevel パラメータに対応しているかを判定する
+    /// </summary>
+    public static bool SupportsThinkingLevel(string? modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName))
+        {
+            return false;
+        }
+
+        return modelName.Contains("gemini-3", StringComparison.OrdinalIgnoreCase) ||
+               modelName.Contains("gemini-4", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ResolveThinkingLevel(string modelName, string? thinkingLevel)
+    {
+        if (!SupportsThinkingLevel(modelName) || string.IsNullOrWhiteSpace(thinkingLevel))
+        {
+            return null;
+        }
+
+        string normalized = thinkingLevel.Trim().ToUpperInvariant();
+        if (normalized is "OFF" or "DEFAULT")
+        {
+            return null;
+        }
+
+        return normalized;
+    }
+
+    private static int GetMaxOutputTokens(string? resolvedThinkingLevel)
+    {
+        return resolvedThinkingLevel is "MEDIUM" or "HIGH" ? 8192 : 4096;
+    }
+
+    private static Dictionary<string, object> BuildGenerationConfig(
+        double temperature,
+        string? resolvedThinkingLevel,
+        bool jsonArrayMode = false)
+    {
+        var config = new Dictionary<string, object>
+        {
+            ["temperature"] = temperature,
+            ["topP"] = 0.8,
+            ["maxOutputTokens"] = GetMaxOutputTokens(resolvedThinkingLevel)
+        };
+
+        if (resolvedThinkingLevel != null)
+        {
+            config["thinkingConfig"] = new Dictionary<string, object>
+            {
+                ["thinkingLevel"] = resolvedThinkingLevel
+            };
+        }
+
+        if (jsonArrayMode)
+        {
+            config["responseMimeType"] = "application/json";
+            config["responseSchema"] = new Dictionary<string, object>
+            {
+                ["type"] = "ARRAY",
+                ["items"] = new Dictionary<string, object>
+                {
+                    ["type"] = "STRING"
+                }
+            };
+        }
+
+        return config;
+    }
+
+    /// <summary>
+    /// Gemini APIレスポンスの candidates[0].content.parts から思考パート (thought: true) を除外し、本文テキストのみを結合して返す
+    /// </summary>
+    public static string ExtractResponseText(JsonNode? rootNode)
+    {
+        var parts = rootNode?["candidates"]?[0]?["content"]?["parts"]?.AsArray();
+        if (parts == null || parts.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var sb = new StringBuilder();
+        foreach (var part in parts)
+        {
+            if (part == null) continue;
+
+            var thoughtNode = part["thought"];
+            if (thoughtNode != null && thoughtNode.GetValueKind() == JsonValueKind.True)
+            {
+                continue;
+            }
+
+            var textNode = part["text"];
+            if (textNode == null) continue;
+
+            string? text = textNode.GetValueKind() == JsonValueKind.String
+                ? textNode.GetValue<string>()
+                : textNode.ToString();
+
+            if (!string.IsNullOrEmpty(text))
+            {
+                sb.Append(text);
+            }
+        }
+
+        return sb.ToString();
+    }
 
     /// <summary>
     /// 指定されたテキストを Gemini API を使って推敲・誤変換修正する
@@ -39,32 +151,119 @@ public class GeminiService
         KeystrokeAnalysisResult? analysis = null,
         string? recentContext = null)
     {
-        if (string.IsNullOrWhiteSpace(inputText))
+        var apiResponse = await SendGenerateContentAsync(
+            inputText,
+            settings,
+            settings.GetEffectiveSystemPrompt(),
+            temperature: 0.1,
+            jsonArrayMode: false,
+            analysis,
+            recentContext);
+
+        if (!apiResponse.Success)
         {
             return new CorrectionResult
             {
                 Success = false,
                 OriginalText = inputText,
                 CorrectedText = inputText,
-                ErrorMessage = "入力テキストが空です。"
+                ErrorMessage = apiResponse.ErrorMessage
             };
+        }
+
+        // 余計な記号やコードブロック・ラベルのクリーニング
+        string cleanedText = CleanResponse(apiResponse.Text.Trim());
+
+        return new CorrectionResult
+        {
+            Success = true,
+            OriginalText = inputText,
+            CorrectedText = cleanedText
+        };
+    }
+
+    /// <summary>
+    /// 指定されたテキストに対して最大3件の修正・言い換え候補を Gemini API から取得する
+    /// </summary>
+    /// <param name="inputText">修正対象のテキスト</param>
+    /// <param name="settings">アプリ設定</param>
+    /// <param name="analysis">キーストローク解析結果（省略時は内部で自動解析）</param>
+    /// <param name="recentContext">直前のセッション文脈テキスト（任意）</param>
+    /// <returns>候補リストを含む取得結果</returns>
+    public async Task<CandidateResult> GetCandidatesAsync(
+        string inputText,
+        AppSettings settings,
+        KeystrokeAnalysisResult? analysis = null,
+        string? recentContext = null)
+    {
+        string baseSystemPrompt = settings.GetEffectiveSystemPrompt().TrimEnd();
+        string systemPrompt = string.IsNullOrEmpty(baseSystemPrompt)
+            ? CandidateOverrideInstruction
+            : $"{baseSystemPrompt}\n\n{CandidateOverrideInstruction}";
+
+        var apiResponse = await SendGenerateContentAsync(
+            inputText,
+            settings,
+            systemPrompt,
+            temperature: 0.35,
+            jsonArrayMode: true,
+            analysis,
+            recentContext);
+
+        if (!apiResponse.Success)
+        {
+            return new CandidateResult
+            {
+                Success = false,
+                OriginalText = inputText,
+                ErrorMessage = apiResponse.ErrorMessage
+            };
+        }
+
+        List<string> candidates = ParseCandidatesResponse(apiResponse.Text);
+        if (candidates.Count == 0)
+        {
+            return new CandidateResult
+            {
+                Success = false,
+                OriginalText = inputText,
+                ErrorMessage = "候補を取得できませんでした。"
+            };
+        }
+
+        return new CandidateResult
+        {
+            Success = true,
+            OriginalText = inputText,
+            Candidates = candidates
+        };
+    }
+
+    private async Task<(bool Success, string Text, string? ErrorMessage)> SendGenerateContentAsync(
+        string inputText,
+        AppSettings settings,
+        string systemPrompt,
+        double temperature,
+        bool jsonArrayMode,
+        KeystrokeAnalysisResult? analysis,
+        string? recentContext)
+    {
+        if (string.IsNullOrWhiteSpace(inputText))
+        {
+            return (false, string.Empty, "入力テキストが空です。");
         }
 
         if (string.IsNullOrWhiteSpace(settings.ApiKey))
         {
-            return new CorrectionResult
-            {
-                Success = false,
-                OriginalText = inputText,
-                CorrectedText = inputText,
-                ErrorMessage = "Gemini API キーが設定されていません。設定画面からAPIキーを入力してください。"
-            };
+            return (false, string.Empty, "Gemini API キーが設定されていません。設定画面からAPIキーを入力してください。");
         }
 
         analysis ??= KeystrokeAnalyzer.BuildAnalysisHint(inputText);
         string userPrompt = BuildUserPrompt(inputText, analysis, recentContext);
 
         string modelName = string.IsNullOrWhiteSpace(settings.Model) ? "gemini-2.5-flash" : settings.Model.Trim();
+        string? resolvedThinkingLevel = ResolveThinkingLevel(modelName, settings.ThinkingLevel);
+        var generationConfig = BuildGenerationConfig(temperature, resolvedThinkingLevel, jsonArrayMode);
         string url = $"https://generativelanguage.googleapis.com/v1beta/models/{modelName}:generateContent?key={settings.ApiKey.Trim()}";
 
         try
@@ -75,7 +274,7 @@ public class GeminiService
                 {
                     parts = new[]
                     {
-                        new { text = settings.SystemPrompt }
+                        new { text = systemPrompt }
                     }
                 },
                 contents = new[]
@@ -89,12 +288,7 @@ public class GeminiService
                         }
                     }
                 },
-                generationConfig = new
-                {
-                    temperature = 0.1,
-                    topP = 0.8,
-                    maxOutputTokens = 2048
-                }
+                generationConfig
             };
 
             string jsonContent = JsonSerializer.Serialize(requestBody);
@@ -106,71 +300,31 @@ public class GeminiService
             if (!response.IsSuccessStatusCode)
             {
                 string errorDetail = ParseErrorMessage(responseString);
-                return new CorrectionResult
-                {
-                    Success = false,
-                    OriginalText = inputText,
-                    CorrectedText = inputText,
-                    ErrorMessage = $"Gemini API エラー (ステータス {(int)response.StatusCode}): {errorDetail}"
-                };
+                return (false, string.Empty, $"Gemini API エラー (ステータス {(int)response.StatusCode}): {errorDetail}");
             }
 
             var rootNode = JsonNode.Parse(responseString);
             var candidates = rootNode?["candidates"]?.AsArray();
             if (candidates == null || candidates.Count == 0)
             {
-                return new CorrectionResult
-                {
-                    Success = false,
-                    OriginalText = inputText,
-                    CorrectedText = inputText,
-                    ErrorMessage = "Gemini から候補が返されませんでした。"
-                };
+                return (false, string.Empty, "Gemini から候補が返されませんでした。");
             }
 
-            var parts = candidates[0]?["content"]?["parts"]?.AsArray();
-            string? resultText = parts?[0]?["text"]?.ToString();
-
+            string resultText = ExtractResponseText(rootNode);
             if (string.IsNullOrEmpty(resultText))
             {
-                return new CorrectionResult
-                {
-                    Success = false,
-                    OriginalText = inputText,
-                    CorrectedText = inputText,
-                    ErrorMessage = "空のレスポンスが返されました。"
-                };
+                return (false, string.Empty, "空のレスポンスが返されました。");
             }
 
-            // 余計な記号やコードブロック・ラベルのクリーニング
-            string cleanedText = CleanResponse(resultText.Trim());
-
-            return new CorrectionResult
-            {
-                Success = true,
-                OriginalText = inputText,
-                CorrectedText = cleanedText
-            };
+            return (true, resultText, null);
         }
         catch (TaskCanceledException)
         {
-            return new CorrectionResult
-            {
-                Success = false,
-                OriginalText = inputText,
-                CorrectedText = inputText,
-                ErrorMessage = "APIリクエストがタイムアウトしました。"
-            };
+            return (false, string.Empty, "APIリクエストがタイムアウトしました。");
         }
         catch (Exception ex)
         {
-            return new CorrectionResult
-            {
-                Success = false,
-                OriginalText = inputText,
-                CorrectedText = inputText,
-                ErrorMessage = $"通信エラー: {ex.Message}"
-            };
+            return (false, string.Empty, $"通信エラー: {ex.Message}");
         }
     }
 
@@ -214,18 +368,61 @@ public class GeminiService
     }
 
     /// <summary>
-    /// APIからの返答から余分な装飾（Markdownの引用やコードブロック、オウム返しされたセクションラベルなど）を剥がす
+    /// 候補一覧のJSONレスポンスをパースし、クリーニング・重複排除して最大3件の候補リストを返す
     /// </summary>
-    public static string CleanResponse(string text)
+    public static List<string> ParseCandidatesResponse(string? rawText)
     {
-        if (string.IsNullOrWhiteSpace(text))
+        if (string.IsNullOrWhiteSpace(rawText))
         {
-            return string.Empty;
+            return new List<string>();
         }
 
-        text = text.Trim();
+        string unwrapped = StripMarkdownCodeFence(rawText.Trim());
 
-        // 先頭・末尾の ``` や ```markdown を削除
+        if (!TryParseJsonArray(unwrapped, out JsonArray? jsonArray))
+        {
+            int start = unwrapped.IndexOf('[');
+            int end = unwrapped.LastIndexOf(']');
+            if (start >= 0 && end > start)
+            {
+                string slice = unwrapped.Substring(start, end - start + 1);
+                TryParseJsonArray(slice, out jsonArray);
+            }
+        }
+
+        if (jsonArray != null)
+        {
+            var results = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var item in jsonArray)
+            {
+                if (item is JsonValue val && val.TryGetValue<string>(out string? itemText))
+                {
+                    string cleaned = CleanResponse(itemText);
+                    if (!string.IsNullOrWhiteSpace(cleaned) && seen.Add(cleaned))
+                    {
+                        results.Add(cleaned);
+                        if (results.Count >= 3)
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        // JSON配列のパースに失敗した場合は単一テキストとしてフォールバック
+        string fallback = CleanResponse(rawText);
+        return string.IsNullOrWhiteSpace(fallback)
+            ? new List<string>()
+            : new List<string> { fallback };
+    }
+
+    private static string StripMarkdownCodeFence(string text)
+    {
         if (text.StartsWith("```") && text.EndsWith("```"))
         {
             int firstNewline = text.IndexOf('\n');
@@ -238,6 +435,37 @@ public class GeminiService
                 text = text.Substring(0, text.Length - 3).Trim();
             }
         }
+        return text;
+    }
+
+    private static bool TryParseJsonArray(string text, out JsonArray? array)
+    {
+        array = null;
+        try
+        {
+            if (JsonNode.Parse(text) is JsonArray parsed)
+            {
+                array = parsed;
+                return true;
+            }
+        }
+        catch
+        {
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// APIからの返答から余分な装飾（Markdownの引用やコードブロック、オウム返しされたセクションラベルなど）を剥がす
+    /// </summary>
+    public static string CleanResponse(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        text = StripMarkdownCodeFence(text.Trim());
 
         // 万が一 AI が【推敲対象テキスト...】のセクションごとオウム返しした場合、その見出し以降のみを抽出
         Match targetMatch = TargetSectionHeaderRegex.Match(text);
@@ -288,8 +516,20 @@ public class GeminiService
 public class CorrectionResult
 {
     public bool Success { get; set; }
+    public bool IsCancelled { get; set; }
     public string OriginalText { get; set; } = string.Empty;
     public string CorrectedText { get; set; } = string.Empty;
     public string? ErrorMessage { get; set; }
-    public bool HasChanged => Success && !string.Equals(OriginalText, CorrectedText, StringComparison.Ordinal);
+    public bool HasChanged => Success && !IsCancelled && !string.Equals(OriginalText, CorrectedText, StringComparison.Ordinal);
+}
+
+/// <summary>
+/// 複数候補取得結果
+/// </summary>
+public class CandidateResult
+{
+    public bool Success { get; set; }
+    public string OriginalText { get; set; } = string.Empty;
+    public List<string> Candidates { get; set; } = new();
+    public string? ErrorMessage { get; set; }
 }
