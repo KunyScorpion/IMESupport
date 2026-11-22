@@ -91,6 +91,25 @@ public class AppSettingsTests
     }
 
     [TestMethod]
+    public void MigratePromptIfLegacy_MigratesLegacyAndEmptyButPreservesCustom()
+    {
+        // 空・null・空白のみは新デフォルトへ移行
+        Assert.AreEqual(AppSettings.DefaultPrompt, AppSettings.MigratePromptIfLegacy(null));
+        Assert.AreEqual(AppSettings.DefaultPrompt, AppSettings.MigratePromptIfLegacy(string.Empty));
+        Assert.AreEqual(AppSettings.DefaultPrompt, AppSettings.MigratePromptIfLegacy("   \r\n\t  "));
+
+        // v1 / v2 の旧デフォルトは改行コードの違いを吸収して新デフォルトへ移行
+        Assert.AreEqual(AppSettings.DefaultPrompt, AppSettings.MigratePromptIfLegacy(AppSettings.LegacyDefaultPromptV1));
+        Assert.AreEqual(AppSettings.DefaultPrompt, AppSettings.MigratePromptIfLegacy(AppSettings.LegacyDefaultPromptV1.Replace("\r\n", "\n")));
+        Assert.AreEqual(AppSettings.DefaultPrompt, AppSettings.MigratePromptIfLegacy(AppSettings.LegacyDefaultPromptV2));
+        Assert.AreEqual(AppSettings.DefaultPrompt, AppSettings.MigratePromptIfLegacy(AppSettings.LegacyDefaultPromptV2.Replace("\r\n", "\n")));
+
+        // ユーザーが独自編集したプロンプトはそのまま維持
+        const string customPrompt = "あなた専用のカスタムプロンプトです。";
+        Assert.AreEqual(customPrompt, AppSettings.MigratePromptIfLegacy(customPrompt));
+    }
+
+    [TestMethod]
     public void CleanResponse_RemovesMarkdownAndQuotes()
     {
         Assert.AreEqual("こんにちは", GeminiService.CleanResponse("```markdown\nこんにちは\n```"));

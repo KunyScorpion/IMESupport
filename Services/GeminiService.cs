@@ -18,7 +18,34 @@ public class GeminiService
     };
 
     private const string CandidateOverrideInstruction =
-        "【出力形式の上書き指示】\n誤字脱字修正に加え、文脈に即した自然な表現のバリエーションを含めて最大3つの候補を作成し、JSON文字列配列（例: [\"候補1\", \"候補2\", \"候補3\"]）のみで出力すること（既存の単一出力制約よりこの形式を優先する）。";
+        """
+        # 出力形式の上書き指示（複数候補モード）
+        上記の「出力ルール」を上書きし、以下のルールでJSON文字列配列のみを出力すること。
+        - `<target>` 内の原文に対する修正候補を、最も確度の高い順に最大3件作成し、JSON文字列配列（例: ["候補1", "候補2", "候補3"]）として出力すること。
+        - 候補1は「最小介入での正確な誤字・誤変換修正（原文の口調・記号を厳守）」とすること。
+        - 候補2は「漢字変換の最適化や、同音異義語の有力な別解釈がある場合の修正案」とすること。
+        -候補3は「原文の意図・口調の方向性を保ちつつ、語順や言い回しを大胆に組み替えてより自然で読みやすく洗練させたリライト案」とすること。ただし冗長にせず、元の文字数と同等かそれより簡潔にまとめること。
+        - 候補同士の重複は避け、各候補はテキスト本体のみ（番号や解説なし）とすること。
+        """;
+
+    private static readonly Regex TargetXmlTagRegex = new(
+        @"<target>\s*([\s\S]*?)\s*</target>",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LeadingTargetOpenTagRegex = new(
+        @"^(?:<(?:context|keystroke_hint)>[\s\S]*?</(?:context|keystroke_hint)>\s*)*<target>\s*",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex TrailingTargetCloseTagRegex = new(
+        @"\s*</target>$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly (string Open, string Close)[] QuotePairs =
+    [
+        ("「", "」"),
+        ("\"", "\""),
+        ("“", "”")
+    ];
 
     private static readonly Regex TargetSectionHeaderRegex = new(
         @"【推敲対象テキスト[^】]*】\s*",
@@ -172,7 +199,7 @@ public class GeminiService
         }
 
         // 余計な記号やコードブロック・ラベルのクリーニング
-        string cleanedText = CleanResponse(apiResponse.Text.Trim());
+        string cleanedText = CleanResponse(apiResponse.Text.Trim(), inputText);
 
         return new CorrectionResult
         {
@@ -220,7 +247,7 @@ public class GeminiService
             };
         }
 
-        List<string> candidates = ParseCandidatesResponse(apiResponse.Text);
+        List<string> candidates = ParseCandidatesResponse(apiResponse.Text, inputText);
         if (candidates.Count == 0)
         {
             return new CandidateResult
@@ -339,30 +366,26 @@ public class GeminiService
         bool hasContext = !string.IsNullOrWhiteSpace(recentContext);
         bool hasAnomaly = analysis is { HasAnomaly: true } && !string.IsNullOrWhiteSpace(analysis.EstimatedRomaji);
 
-        if (!hasContext && !hasAnomaly)
-        {
-            return inputText;
-        }
-
         var sb = new StringBuilder();
 
         if (hasContext)
         {
-            sb.AppendLine("【直前の文脈（参考情報・出力に含めないこと）】");
-            sb.AppendLine(recentContext!.Trim());
-            sb.AppendLine();
+            sb.Append("<context>\n");
+            sb.Append(recentContext!.Trim());
+            sb.Append("\n</context>\n\n");
         }
 
         if (hasAnomaly && analysis != null)
         {
-            sb.AppendLine("【推定ローマ字打鍵列（タイポ復元ヒント）】");
-            sb.AppendLine($"読み還元: {analysis.ReadingText}");
-            sb.AppendLine($"推定打鍵: {analysis.EstimatedRomaji}");
-            sb.AppendLine();
+            sb.Append("<keystroke_hint>\n");
+            sb.Append($"読み還元: {analysis.ReadingText}\n");
+            sb.Append($"推定打鍵: {analysis.EstimatedRomaji}");
+            sb.Append("\n</keystroke_hint>\n\n");
         }
 
-        sb.AppendLine("【推敲対象テキスト（この部分のみを修正して出力すること）】");
+        sb.Append("<target>\n");
         sb.Append(inputText);
+        sb.Append("\n</target>");
 
         return sb.ToString();
     }
@@ -370,7 +393,7 @@ public class GeminiService
     /// <summary>
     /// 候補一覧のJSONレスポンスをパースし、クリーニング・重複排除して最大3件の候補リストを返す
     /// </summary>
-    public static List<string> ParseCandidatesResponse(string? rawText)
+    public static List<string> ParseCandidatesResponse(string? rawText, string? originalText = null)
     {
         if (string.IsNullOrWhiteSpace(rawText))
         {
@@ -399,7 +422,7 @@ public class GeminiService
             {
                 if (item is JsonValue val && val.TryGetValue<string>(out string? itemText))
                 {
-                    string cleaned = CleanResponse(itemText);
+                    string cleaned = CleanResponse(itemText, originalText);
                     if (!string.IsNullOrWhiteSpace(cleaned) && seen.Add(cleaned))
                     {
                         results.Add(cleaned);
@@ -415,7 +438,7 @@ public class GeminiService
         }
 
         // JSON配列のパースに失敗した場合は単一テキストとしてフォールバック
-        string fallback = CleanResponse(rawText);
+        string fallback = CleanResponse(rawText, originalText);
         return string.IsNullOrWhiteSpace(fallback)
             ? new List<string>()
             : new List<string> { fallback };
@@ -456,37 +479,77 @@ public class GeminiService
     }
 
     /// <summary>
-    /// APIからの返答から余分な装飾（Markdownの引用やコードブロック、オウム返しされたセクションラベルなど）を剥がす
+    /// APIからの返答から余分な装飾（Markdownコードブロック、XML/旧形式セクションタグ、不要な引用符など）を剥がす
     /// </summary>
-    public static string CleanResponse(string text)
+    public static string CleanResponse(string text, string? originalText = null)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
             return string.Empty;
         }
 
-        text = StripMarkdownCodeFence(text.Trim());
+        text = text.Trim();
+        string? trimmedOriginal = originalText?.Trim();
+        string? trimmedStartOriginal = originalText?.TrimStart();
 
-        // 万が一 AI が【推敲対象テキスト...】のセクションごとオウム返しした場合、その見出し以降のみを抽出
-        Match targetMatch = TargetSectionHeaderRegex.Match(text);
-        if (targetMatch.Success)
+        // 1. 先頭・末尾のコードブロック除去（原文自体がコードブロックで始まらない場合のみ）
+        if (trimmedStartOriginal == null || !trimmedStartOriginal.StartsWith("```", StringComparison.Ordinal))
         {
-            text = text.Substring(targetMatch.Index + targetMatch.Length).Trim();
+            text = StripMarkdownCodeFence(text).Trim();
         }
 
-        // 先頭に残った【修正後テキスト】や【出力】などの角括弧ラベルを除去
-        text = LeadingBracketLabelRegex.Replace(text, string.Empty).Trim();
-
-        // 先頭・末尾の引用符を剥がす（誤って付けられた場合）
-        if (text.Length >= 2 &&
-            ((text.StartsWith("「") && text.EndsWith("」")) ||
-             (text.StartsWith("\"") && text.EndsWith("\"")) ||
-             (text.StartsWith("“") && text.EndsWith("”"))))
+        // 2. XMLタグ（<target>...</target> 等）のオウム返しを除去
+        if (originalText == null || !originalText.Contains("<target>", StringComparison.OrdinalIgnoreCase))
         {
-            text = text.Substring(1, text.Length - 2);
+            Match xmlMatch = TargetXmlTagRegex.Match(text);
+            if (xmlMatch.Success)
+            {
+                text = xmlMatch.Groups[1].Value.Trim();
+            }
+            else
+            {
+                text = LeadingTargetOpenTagRegex.Replace(text, string.Empty);
+                text = TrailingTargetCloseTagRegex.Replace(text, string.Empty).Trim();
+            }
+        }
+
+        // 3. 万が一 AI が【推敲対象テキスト...】のセクションごとオウム返しした場合、その見出し以降のみを抽出
+        if (originalText == null || !originalText.Contains("【推敲対象テキスト", StringComparison.Ordinal))
+        {
+            Match targetMatch = TargetSectionHeaderRegex.Match(text);
+            if (targetMatch.Success)
+            {
+                text = text.Substring(targetMatch.Index + targetMatch.Length).Trim();
+            }
+        }
+
+        // 4. 先頭に残った【修正後テキスト】などの角括弧ラベルを除去（原文が「【」で始まる場合は維持）
+        if (trimmedStartOriginal == null || !trimmedStartOriginal.StartsWith("【", StringComparison.Ordinal))
+        {
+            text = LeadingBracketLabelRegex.Replace(text, string.Empty).Trim();
+        }
+
+        // 5. 先頭・末尾の引用符を剥がす（原文が同じ引用符ペアで囲まれていない場合のみ）
+        foreach (var (open, close) in QuotePairs)
+        {
+            if (IsWrappedWith(text, open, close))
+            {
+                if (trimmedOriginal == null || !IsWrappedWith(trimmedOriginal, open, close))
+                {
+                    text = text.Substring(open.Length, text.Length - open.Length - close.Length);
+                }
+                break;
+            }
         }
 
         return text.Trim();
+    }
+
+    private static bool IsWrappedWith(string value, string open, string close)
+    {
+        return value.Length >= open.Length + close.Length &&
+               value.StartsWith(open, StringComparison.Ordinal) &&
+               value.EndsWith(close, StringComparison.Ordinal);
     }
 
     /// <summary>
