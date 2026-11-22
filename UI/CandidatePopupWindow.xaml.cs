@@ -1,9 +1,11 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using IMESupport.Services;
 
 namespace IMESupport.UI;
 
@@ -12,7 +14,14 @@ namespace IMESupport.UI;
 /// </summary>
 public partial class CandidatePopupWindow : Window
 {
+    private const double OuterShadowMarginDip = 10.0;
+    private const double AnchorGapDip = 6.0;
+
+    private static readonly SolidColorBrush InsertedBgBrush = CreateFrozenBrush(220, 252, 231);
+    private static readonly SolidColorBrush InsertedFgBrush = CreateFrozenBrush(22, 163, 74);
+
     private readonly TaskCompletionSource<string?> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private ScreenAnchorRect? _anchorRect;
     private bool _isCompleted;
     private bool _isClosing;
 
@@ -27,6 +36,63 @@ public partial class CandidatePopupWindow : Window
     {
         public string NumberLabel { get; init; } = string.Empty;
         public string Text { get; init; } = string.Empty;
+        public IReadOnlyList<DiffPiece> DiffPieces { get; init; } = Array.Empty<DiffPiece>();
+    }
+
+    public static readonly DependencyProperty DiffPiecesProperty =
+        DependencyProperty.RegisterAttached(
+            "DiffPieces",
+            typeof(IReadOnlyList<DiffPiece>),
+            typeof(CandidatePopupWindow),
+            new PropertyMetadata(null, OnDiffPiecesChanged));
+
+    public static IReadOnlyList<DiffPiece>? GetDiffPieces(DependencyObject obj) =>
+        (IReadOnlyList<DiffPiece>?)obj.GetValue(DiffPiecesProperty);
+
+    public static void SetDiffPieces(DependencyObject obj, IReadOnlyList<DiffPiece>? value) =>
+        obj.SetValue(DiffPiecesProperty, value);
+
+    private static SolidColorBrush CreateFrozenBrush(byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
+    }
+
+    private static void OnDiffPiecesChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not TextBlock textBlock)
+        {
+            return;
+        }
+
+        textBlock.Inlines.Clear();
+        if (e.NewValue is IReadOnlyList<DiffPiece> pieces)
+        {
+            foreach (DiffPiece piece in pieces)
+            {
+                if (piece.Type == DiffType.Unchanged)
+                {
+                    textBlock.Inlines.Add(new Run(piece.Text));
+                }
+                else if (piece.Type == DiffType.Inserted)
+                {
+                    textBlock.Inlines.Add(new Run(piece.Text)
+                    {
+                        Background = InsertedBgBrush,
+                        Foreground = InsertedFgBrush,
+                        FontWeight = FontWeights.Bold
+                    });
+                }
+            }
+        }
+
+        if (textBlock.Inlines.Count == 0 &&
+            textBlock.DataContext is CandidateItem item &&
+            !string.IsNullOrEmpty(item.Text))
+        {
+            textBlock.Inlines.Add(new Run(item.Text));
+        }
     }
 
     public CandidatePopupWindow()
@@ -39,14 +105,19 @@ public partial class CandidatePopupWindow : Window
     /// <summary>
     /// 候補一覧を表示し、ユーザーが選択したテキスト（キャンセル時は null）を非同期で返す
     /// </summary>
-    public Task<string?> ShowCandidatesAsync(string originalText, IReadOnlyList<string> candidates)
+    public Task<string?> ShowCandidatesAsync(
+        string originalText,
+        IReadOnlyList<string> candidates,
+        ScreenAnchorRect? anchorRect = null)
     {
         if (candidates == null || candidates.Count == 0)
         {
             return Task.FromResult<string?>(null);
         }
 
-        string singleLinePreview = (originalText ?? string.Empty).Replace("\r", " ").Replace("\n", " ").Trim();
+        _anchorRect = anchorRect;
+        string safeOriginal = originalText ?? string.Empty;
+        string singleLinePreview = safeOriginal.Replace("\r", " ").Replace("\n", " ").Trim();
         TxtOriginalPreview.Text = $"原文: {singleLinePreview}";
 
         var items = candidates
@@ -54,7 +125,8 @@ public partial class CandidatePopupWindow : Window
             .Select((text, index) => new CandidateItem
             {
                 NumberLabel = $"{index + 1}.",
-                Text = text
+                Text = text,
+                DiffPieces = DiffHelper.CalculateDiff(safeOriginal, text)
             })
             .ToList();
 
@@ -70,7 +142,7 @@ public partial class CandidatePopupWindow : Window
 
     private void CandidatePopupWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        PositionNearCursor();
+        PositionPopup();
 
         IntPtr hwnd = new WindowInteropHelper(this).Handle;
         if (hwnd != IntPtr.Zero)
@@ -84,50 +156,68 @@ public partial class CandidatePopupWindow : Window
 
     private void CandidatePopupWindow_ContentRendered(object? sender, EventArgs e)
     {
-        PositionNearCursor();
+        PositionPopup();
     }
 
     /// <summary>
-    /// 現在のマウスカーソル位置・モニター作業領域・DPIを考慮して画面内にクランプ配置する
+    /// キャレット／選択範囲アンカー（取得失敗時はマウスカーソル）基準で、モニター作業領域内に配置する
     /// </summary>
-    private void PositionNearCursor()
+    private void PositionPopup()
     {
         try
         {
-            var cursorPos = System.Windows.Forms.Cursor.Position;
-            var workingArea = System.Windows.Forms.Screen.FromPoint(cursorPos).WorkingArea;
             var dpi = VisualTreeHelper.GetDpi(this);
-
             double scaleX = dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
             double scaleY = dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1.0;
 
-            double cursorX = cursorPos.X / scaleX;
-            double cursorY = cursorPos.Y / scaleY;
+            double width = ActualWidth > 0 ? ActualWidth : Width;
+            double height = ActualHeight > 0 ? ActualHeight : 220;
+
+            System.Drawing.Rectangle workingArea;
+            double anchorLeft;
+            double anchorTop;
+            double anchorBottom;
+
+            if (_anchorRect is { IsValid: true } anchor)
+            {
+                int centerPxX = (int)Math.Round(anchor.Left + anchor.Width / 2.0);
+                int centerPxY = (int)Math.Round(anchor.Top + anchor.Height / 2.0);
+                workingArea = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point(centerPxX, centerPxY)).WorkingArea;
+
+                anchorLeft = anchor.Left / scaleX;
+                anchorTop = anchor.Top / scaleY;
+                anchorBottom = anchor.Bottom / scaleY;
+            }
+            else
+            {
+                var cursorPos = System.Windows.Forms.Cursor.Position;
+                workingArea = System.Windows.Forms.Screen.FromPoint(cursorPos).WorkingArea;
+
+                anchorLeft = cursorPos.X / scaleX;
+                anchorTop = cursorPos.Y / scaleY;
+                anchorBottom = anchorTop + 18.0;
+            }
+
             double workLeft = workingArea.Left / scaleX;
             double workTop = workingArea.Top / scaleY;
             double workRight = workingArea.Right / scaleX;
             double workBottom = workingArea.Bottom / scaleY;
 
-            double width = ActualWidth > 0 ? ActualWidth : Width;
-            double height = ActualHeight > 0 ? ActualHeight : 220;
+            (double left, double top) = CaretPositionService.CalculatePopupPosition(
+                anchorLeft,
+                anchorTop,
+                anchorBottom,
+                width,
+                height,
+                workLeft,
+                workTop,
+                workRight,
+                workBottom,
+                OuterShadowMarginDip,
+                AnchorGapDip);
 
-            double left = cursorX + 12;
-            double top = cursorY + 18;
-
-            if (left + width > workRight)
-            {
-                left = cursorX - width - 12;
-            }
-            if (top + height > workBottom)
-            {
-                top = cursorY - height - 12;
-            }
-
-            double maxLeft = Math.Max(workLeft, workRight - width);
-            double maxTop = Math.Max(workTop, workBottom - height);
-
-            Left = Math.Clamp(left, workLeft, maxLeft);
-            Top = Math.Clamp(top, workTop, maxTop);
+            Left = left;
+            Top = top;
         }
         catch
         {

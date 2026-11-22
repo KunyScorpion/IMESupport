@@ -20,7 +20,7 @@ public class TextReplacementService
     /// <summary>
     /// ポップアップ候補表示モード時にユーザーへ候補を提示し選択結果を受け取るデリゲート（UI層から注入）
     /// </summary>
-    public Func<string, IReadOnlyList<string>, Task<string?>>? CandidateSelector { get; set; }
+    public Func<string, IReadOnlyList<string>, ScreenAnchorRect?, Task<string?>>? CandidateSelector { get; set; }
 
     public TextReplacementService(GeminiService geminiService)
     {
@@ -121,6 +121,11 @@ public class TextReplacementService
 
                 if (settings.EnableCandidatePopup && CandidateSelector != null)
                 {
+                    ScreenAnchorRect? anchorRect = await CaretPositionService.TryGetCaretAnchorRectAsync(targetHwnd);
+                    StatusLogged?.Invoke(anchorRect is { IsValid: true } rect
+                        ? $"📍 キャレット位置取得成功 ({rect.Source}): ({rect.Left:F0}, {rect.Top:F0}) {rect.Width:F0}x{rect.Height:F0}"
+                        : "📍 キャレット位置を取得できないためマウスカーソル位置へ表示します。");
+
                     StatusLogged?.Invoke($"Gemini API ({settings.Model}) に候補取得リクエスト送信中...");
                     var candidateResult = await _geminiService.GetCandidatesAsync(selectedText, settings, analysis, recentContext);
 
@@ -151,7 +156,7 @@ public class TextReplacementService
                     else
                     {
                         StatusLogged?.Invoke($"候補提示 ({candidates.Count}件): ユーザーの選択を待機中...");
-                        string? chosen = await CandidateSelector(selectedText, candidates);
+                        string? chosen = await CandidateSelector(selectedText, candidates, anchorRect);
 
                         if (chosen == null)
                         {

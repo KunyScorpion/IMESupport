@@ -72,9 +72,9 @@ public partial class App : Application
         _geminiService = new GeminiService();
         _replacementService = new TextReplacementService(_geminiService)
         {
-            CandidateSelector = (originalText, candidates) =>
+            CandidateSelector = (originalText, candidates, anchorRect) =>
                 Dispatcher.InvokeAsync(() =>
-                    new CandidatePopupWindow().ShowCandidatesAsync(originalText, candidates)).Task.Unwrap()
+                    new CandidatePopupWindow().ShowCandidatesAsync(originalText, candidates, anchorRect)).Task.Unwrap()
         };
         _hookService = new KeyboardHookService();
 
