@@ -4,6 +4,7 @@
 [Bb]in/
 [Oo]bj/
 [Pp]ublish/
+[Pp]ublish-*/
 [Dd]ebug/
 [Rr]elease/
 x64/
@@ -91,6 +92,7 @@ desktop.ini
 .Spotlight-V100
 .Trashes
 
-# AI / エディタ補助設定
+# AI / エディタ補助設定・ダンプ出力
 .claude/
 .gemini/
+repomix-output.xml

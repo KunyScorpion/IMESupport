@@ -5,68 +5,90 @@
 [![AI](https://img.shields.io/badge/AI-Google%20Gemini%20API-orange.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-green.svg)]()
 
-Windows上で動作する軽量・超高速なAI日本語入力・文脈推敲支援常駐ツールです。  
-テキストを入力した直後や文章を選択した状態で**「変換キーを2回素早く押す（ダブルタップ）」**だけで、Gemini AIが文脈を即座に解析し、同音異義語の誤変換・タイピングミスによる不自然な文字列・脱字を瞬時に正しい日本語へ自動置換します。
+Windows 上で動作する軽量・高速な AI 日本語入力・文脈推敲支援常駐ツールです。  
+テキストを入力した直後や文章を選択した状態で**「トリガーキーを2回素早く押す（ダブルタップ）」**だけで、Gemini AI が文脈とキーストロークの崩れを解析し、同音異義語の誤変換・タイピングミス・脱字を正しい日本語へ自動置換（または複数候補から選択置換）します。
 
----
 > [!WARNING]
 > **ご注意 / お願い**
-> 本リポジトリは自分用のお試しプロジェクト（WIP）です。不具合や未実装機能が多数含まれています。
+> 本リポジトリは個人向けの実験・開発中プロジェクト（WIP）です。仕様変更や未対応のアプリケーション環境が含まれる場合があります。
+
+---
+
 ## 目次
 
-1. [システム概要と設計方針](#-システム概要と設計方針)
-2. [主要機能](#-主要機能)
-3. [システムアーキテクチャ・動作仕様](#-システムアーキテクチャ動作仕様)
+1. [スクリーンショット](#-スクリーンショット)
+2. [システム概要と設計方針](#-システム概要と設計方針)
+3. [主要機能](#-主要機能)
+4. [システムアーキテクチャ・動作仕様](#-システムアーキテクチャ動作仕様)
    - [キーボードフック＆ダブルタップ検知](#1-キーボードフックダブルタップ検知)
    - [スマート段落選択アルゴリズム](#2-スマート段落選択アルゴリズム)
    - [テキスト置換とクリップボード復元](#3-テキスト置換とクリップボード復元)
-   - [Gemini API 連携＆プロンプト仕様](#4-gemini-api-連携プロンプト仕様)
-   - [推敲履歴と差分ハイライト](#5-推敲履歴と差分ハイライト)
-4. [データ・設定仕様](#-データ設定仕様)
-5. [プロジェクト構成](#-プロジェクト構成)
-6. [セットアップと利用方法](#-セットアップと利用方法)
-7. [ビルドおよび発行手順](#-ビルドおよび発行手順)
-8. [トラブルシューティングとセキュリティ](#-トラブルシューティングとセキュリティ)
-9. [ライセンス](#-ライセンス)
+   - [Gemini API 連携・thinkingLevel・プロンプト仕様](#4-gemini-api-連携thinkinglevelプロンプト仕様)
+   - [ポップアップ候補表示モードとフォーカス復帰](#5-ポップアップ候補表示モードとフォーカス復帰)
+   - [固有名詞・表記ゆれ統一ルールと原文保全クリーニング](#6-固有名詞表記ゆれ統一ルールと原文保全クリーニング)
+   - [ローマ字打鍵崩壊アナライザー＆セッション文脈](#7-ローマ字打鍵崩壊アナライザーセッション文脈)
+   - [推敲履歴と差分ハイライト](#8-推敲履歴と差分ハイライト)
+   - [ステータス通知トレイアイコン](#9-ステータス通知トレイアイコン動的ベクター描画)
+5. [データ・設定仕様](#-データ設定仕様)
+6. [プロジェクト構成](#-プロジェクト構成)
+7. [セットアップと利用方法](#-セットアップと利用方法)
+8. [ビルドおよびテスト手順](#-ビルドおよびテスト手順)
+9. [トラブルシューティングとセキュリティ](#-トラブルシューティングとセキュリティ)
+10. [ライセンス](#-ライセンス)
+
+---
+
+## 📸 スクリーンショット
+
+### 設定画面（Gemini API・思考レベル・トリガー・動作オプション）
+![設定画面 - API・トリガー・動作オプション](docs/screenshots/settings.png)
+
+### 設定画面（動作テスト・固有名詞ルール・AIプロンプト）
+![設定画面 - 動作テスト・固有名詞ルール・AIプロンプト](docs/screenshots/settings-rules.png)
+
+### ポップアップ候補選択画面
+![ポップアップ候補選択画面](docs/screenshots/candidate-popup.png)
+
+### 推敲履歴＆差分ハイライト画面
+![推敲履歴と差分ハイライト画面](docs/screenshots/history.png)
 
 ---
 
 ## 🎯 システム概要と設計方針
 
 ### 開発の背景と目的
-従来のIME（日本語入力システム）では、タイピングの誤打鍵や同音異義語の誤変換、送り仮名のミスを修正するために「バックスペースを連打して打ち直す」「矢印キーで戻って再変換する」といった作業が必要でした。  
-本システムは、**「思考とタイピングの流れを一切止めない」**ことを目的に設計されたデスクトップ常駐型AIツールです。
+従来の IME では、タイピングの誤打鍵や同音異義語の誤変換、ローマ字の母音抜けによる文字化けを修正するために、バックスペースや再変換を繰り返す手間が発生していました。  
+本システムは、**「思考とタイピングの流れを止めない」**ことを目的に設計されたデスクトップ常駐型 AI 入力支援ツールです。
 
 ### 基本方針
-- **極小のオーバーヘッド**: 高速APIモデル（`gemini-2.5-flash` 等）と最適化された低レベルWin32 APIにより、ミリ秒単位でのレスポンスを実現。
-- **あらゆるアプリに対応**: メモ帳、ブラウザ、VSCode、Word、Slack、Teams、Discordなど、Windows上でテキスト入力が可能な全アプリケーションに対応。
-- **環境破壊ゼロ**: 一時利用したクリップボードは直前の状態へ完全復元され、Windowsのクリップボード履歴（Win+V）を汚しません。
-- **タスクトレイ完全常駐**: メインウィンドウを持たず、タスクトレイ（通知領域）にバックグラウンド常駐します。
+- **Service 層と UI 層の疎結合設計**: テキスト取得・API 通信・キー入力模擬を `Services` 層に集約し、候補ポップアップ UI 等はデリゲート（`CandidateSelector`）経由で注入。
+- **あらゆるアプリに対応**: メモ帳、ブラウザ、VS Code、Word、Slack、Teams、Discord など、Windows 上でクリップボード経由のコピー＆ペーストが可能な全アプリケーションで動作。
+- **環境破壊ゼロ**: 一時利用したクリップボード（テキスト・画像・ファイルドロップ・HTML/RTF/CSV）は `try / finally` により直前の状態へ確実に復元され、Windows のクリップボード履歴（`Win+V`）およびクラウド同期を汚染しません。
+- **タスクトレイ完全常駐**: メインウィンドウを持たず、タスクトレイ（通知領域）に常駐して動作します。
 
 ---
 
 ## 🌟 主要機能
 
-1. **変換キー2回（ダブルタップ）発動**
-   - 変換キー（または無変換、Ctrl等）の素早い2回打鍵で起動。
-   - 2回目打鍵時のIME再変換ウィンドウの立ち上がりを自動抑制。
-2. **文脈に応じたAIリアルタイム推敲**
-   - **誤変換修正**: 文脈を考慮した同音異義語の最適化（例: 「変改」→「変換」、「機構」→「気候」）。
-   - **タイピングミス予測補正**: キー誤打鍵、母音/子音抜けの補正（例: 「ありがとございます」→「ありがとうございます」、「よろしくおねがいしま」→「よろしくお願いします」）。
-   - **脱字・送り仮名の補正**: 自然な日本語表現への整流化。
-3. **スマート段落自動選択（未選択時）**
-   - 文字列を選択していない状態でも、マウスのトリプルクリック相当で直前の改行（Enter）までの「現在の1段落」を正確に認識・自動選択。
-4. **クリップボード自動復元**
-   - 置換処理で一時的に使用したクリップボードを、推敲前の元データ（テキスト・画像等）へ完全復元。
-5. **推敲履歴＆差分カラーハイライト表示**
-   - 過去100件の修正履歴を記録。
-   - 単語単位の差分（Diff）解析により、削除箇所（赤色・取消線）と追加箇所（緑色・太字）を視覚的にハイライト表示。
-6. **ステータス通知トレイアイコン＆ダブルクリック履歴表示**
-   - 外部ICOファイル依存ゼロの高品質動的ベクター描画（万年筆ペン先 ＋ AIキラキラ星）。
-   - 推敲状況に応じたリアルタイム色変化（待機: ロイヤルブルー、処理中: アンバーオレンジ、修正完了: エメラルドグリーン、修正不要: スレートグレー、エラー: クリムゾンレッド、一時停止: ダークスレート）。
-   - トレイアイコンのダブルクリックで「推敲履歴」ウィンドウを瞬時に起動。
-7. **柔軟なカスタマイズ性**
-   - 使用モデル（Gemini 2.5 Flash, 2.0 Flash, 3.5 Flash-Lite等）、ダブルタップ判定間隔（ms）、プロンプトの自由編集が可能。
+1. **ダブルタップ起動（変換 / 無変換 / Ctrl / Shift / Alt）**
+   - 設定したトリガーキーの素早い 2 回押しで推敲を開始（2 回目の入力はフック側で抑制し、IME 再変換メニュー等の誤発火を防止）。
+2. **Gemini 4 Hydrogen / Neon 対応 & 思考レベル (`thinkingLevel`) 制御**
+   - `gemini-4-hydrogen` / `gemini-4-neon` / `gemini-3.5-flash-lite` などの Gemini 3 / 4 系モデルで `MINIMAL` / `LOW` / `MEDIUM` / `HIGH` の思考レベルを指定可能。
+   - レスポンス中の思考パート（`thought: true`）を自動除外し、本文のみを正確に抽出。
+3. **2つの置換モード（ダイレクト置換 / ポップアップ候補選択）**
+   - **ダイレクト置換モード（既定）**: 最速で 1 発自動置換。
+   - **ポップアップ候補表示モード**: 最大 3 件の修正・言い換え候補をカーソル近傍にフローティング表示し、数字キー（`1`〜`3`）・`Enter`・クリックで選択置換。設定画面およびトレイメニューからワンクリックで切替可能。
+4. **固有名詞・表記ゆれ統一ルール**
+   - 小説・創作・業務文書向けに固有名詞や一人称・記号ルールを独立した設定欄へ登録でき、AI へ最優先指示として自動結合。
+5. **非対話・原文保全のシステムプロンプト & XML タグ境界**
+   - 質問文・命令文が入力されても返答せずテキスト修正のみを実施。原文のカギ括弧（`「」`）、引用符（`""`）、角括弧見出し（`【重要】` 等）、コードブロック、末尾句読点の有無を保持。
+6. **ローマ字打鍵崩壊アナライザー & 直前文脈バッファ**
+   - 「あr瓦当」→ `argatou` のように表層漢字に引きずられやすい崩壊打鍵をローカルで推定し、`keystroke_hint` として AI へヒント送信。
+   - 直近 5 分以内・最大 3 件の成功履歴を `<context>` として参照し、文脈とトーンを安定化。
+7. **スマート段落自動選択（未選択時）**
+   - 文字列未選択時は、折り返し行を遡って直前の改行までの「現在の 1 段落」を自動選択して推敲。
+8. **推敲履歴＆差分カラーハイライト表示**
+   - 過去 100 件の履歴を記録し、削除（赤・取消線）と追加（緑・太字）を視覚的に比較可能。
 
 ---
 
@@ -80,124 +102,185 @@ sequenceDiagram
     participant Replace as TextReplacementService
     participant TargetApp as アクティブアプリ
     participant Gemini as GeminiService (REST)
-    participant Tray as TrayIcon / UI
+    participant Popup as CandidatePopupWindow
+    participant Tray as TrayIcon / History
 
-    User->>Hook: 変換キーをダブルタップ (350ms以内)
-    Hook->>Hook: 2回目の入力を抑制 (再変換防止)
-    Hook->>Replace: 推敲ワークフロー開始指示
-    Replace->>Replace: クリップボード現行データを退避
+    User->>Hook: トリガーキーをダブルタップ (既定350ms以内)
+    Hook->>Hook: 2回目のキー入力を抑制
+    Hook->>Replace: ExecuteWorkflowAsync 開始 (targetHwnd 記憶)
+    Replace->>Replace: クリップボードをスナップショット退避 (STA)
     alt テキストが選択済み
         Replace->>TargetApp: Ctrl + C 送信
-    else 未選択 (AutoSelect有効)
+    else 未選択 (AutoSelectLineWhenEmpty = true)
         Replace->>TargetApp: Shift+Home / Shift+Left (段落自動選択)
         Replace->>TargetApp: Ctrl + C 送信
     end
-    Replace->>Gemini: 抽出テキストをAPIに送信
-    Gemini-->>Replace: 修正後テキストを返却
-    alt 修正差分あり
-        Replace->>TargetApp: クリップボード経由で Ctrl + V (置換)
+    Replace->>Replace: ローマ字打鍵ヒント生成 & 直前文脈取得
+    alt ポップアップ候補表示モード (EnableCandidatePopup = true)
+        Replace->>Gemini: GetCandidatesAsync (<context>/<keystroke_hint>/<target>)
+        Gemini-->>Replace: 最大3件の候補 (JSON配列パース & 原文保全クリーニング)
+        Replace->>Popup: CandidateSelector デリゲートで候補表示
+        alt ユーザーが候補を選択
+            Popup-->>Replace: 選択テキスト返却
+            Replace->>Replace: クリップボードへセット (Win+V除外フラグ付与)
+            Replace->>TargetApp: SetForegroundWindow(targetHwnd) でフォーカス復帰
+            Replace->>TargetApp: Ctrl + V 送信
+        else Esc / 外クリックでキャンセル
+            Popup-->>Replace: null 返却 (貼り付けなし)
+        end
+    else ダイレクト置換モード (EnableCandidatePopup = false)
+        Replace->>Gemini: ProofreadAsync (<context>/<keystroke_hint>/<target>)
+        Gemini-->>Replace: 修正テキスト (思考パート除外 & 原文保全クリーニング)
+        opt 修正差分あり
+            Replace->>Replace: クリップボードへセット (Win+V除外フラグ付与)
+            Replace->>TargetApp: Ctrl + V 送信
+        end
     end
-    Replace->>Replace: 退避したクリップボードを元に復元
-    Replace->>Tray: 履歴保存 & 通知 (設定ON時)
+    Note over Replace: try / finally で元のクリップボードを確実に復元
+    Replace->>Tray: 履歴記録 (修正完了 / 修正不要 / キャンセル / エラー) & アイコン更新
 ```
 
 ### 1. キーボードフック・ダブルタップ検知
-- **Win32 API**: `SetWindowsHookEx(WH_KEYBOARD_LL, ...)` を利用した低レベルグローバルフック。
+- **Win32 API**: `SetWindowsHookEx(WH_KEYBOARD_LL, ...)` による低レベルグローバルフック（`Services/KeyboardHookService.cs`）。
 - **アルゴリズム**:
-  - 1回目のキー押下（KeyDown → KeyUp）時に高精度タイムスタンプ（`Stopwatch.GetTimestamp()`）を記録。
-  - 設定されたインターバル（初期値: 350ms）以内に同一キーが再度押された場合、ダブルタップとして判定。
-  - フックの戻り値として `(IntPtr)1` を返し、Windows IME へのメッセージ伝播をブロック（IMEの再変換ウィンドウ表示を防止）。
-  - 他の無関係なキーが間に挟まれた場合は即座にステートをリセット。
+  - 1 回目のキー解放（KeyUp）時に `Stopwatch.GetTimestamp()` でタイムスタンプを記録。
+  - 判定間隔（設定範囲: `200〜650ms`、既定: `350ms`）以内に同一対象キーが再び押下（KeyDown）された場合にトリガー発火し、`(IntPtr)1` を返して OS / IME への伝播を抑止。
+  - 対応キー種別: `Convert`（変換キー）、`NonConvert`（無変換キー）、`CtrlDouble`（左右 Ctrl）、`ShiftDouble`（左右 Shift）、`AltDouble`（左右 Alt）、およびカスタム仮想キーコード。
+  - 無関係なキー入力（`VK_PROCESSKEY = 0xE5` を除く）で状態を即座にリセット。
 
 ### 2. スマート段落選択アルゴリズム
-テキスト未選択時、カーソル直前の1段落を安全に抽出します：
-1. `Shift + Home` を送信して現在の行頭まで選択。
-2. `Shift + Left` で1文字ずつ左へ遡り、`\n` または `\r` を検知するまで拡張（最大15行分遡及）。
-3. 改行文字の手前まで戻すことで、入力欄全体を巻き込まず、直前の Enter キー以降の「現在の1段落」のみを厳密に抽出。
+テキスト未選択かつ `AutoSelectLineWhenEmpty == true` の場合、カーソル直前の 1 段落のみを抽出します：
+1. `Shift + Home` を送信して現在の折り返し行の先頭まで選択してコピー。
+2. `Shift + Left` で 1 文字ずつ左へ広げ、先頭文字が `\r` または `\n` に達したら `Shift + Right` で 1 文字戻して終了（最大 15 行分遡及）。
+3. 改行文字でなければワードラップによる折り返し行とみなし、`Shift + Home` で前の折り返し行先頭まで一気に選択を拡張。
 
 ### 3. テキスト置換とクリップボード復元
-- **クリップボード監視**: `GetClipboardSequenceNumber()` をポーリングし、Ctrl+C によるコピー完了をミリ秒単位で確実に検知。
-- **スナップショット退避**: STAスレッド上で `Clipboard.GetDataObject()` を取得・保持。
-- **完全復元**: テキスト置換完了後（Ctrl+V 後）、退避したデータオブジェクトを `Clipboard.SetDataObject(original, true)` で再セット。
+- **メイン STA スレッド優先実行**: `Application.Current?.Dispatcher` を優先利用し、単体テスト等では専用 STA スレッドへフォールバック（`RunOnStaThreadAsync`）。
+- **実データスナップショット退避**: テキスト・画像（`Freeze` 済み `BitmapSource`）・ファイルドロップリスト・リッチテキスト系フォーマット（HTML / RTF / CSV）をメモリへ退避。
+- **確実な復元**: `try / finally` ブロックにより、正常置換・修正不要・キャンセル・API エラー・例外発生のいずれの経路でも元のクリップボードを復元。
+- **Win+V 履歴除外**: 一時セットおよび復元時の `DataObject` に対し、`ExcludeClipboardContentFromMonitorProcessing`、`CanIncludeInClipboardHistory`、`CanUploadToCloudClipboard` フラグを付与して Windows クリップボード履歴・クラウド同期への登録を抑止。
 
-### 4. Gemini API 連携・プロンプト仕様
+### 4. Gemini API 連携・`thinkingLevel`・プロンプト仕様
 - **エンドポイント**: `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
-- **モデル設定**:
-  - デフォルト: `gemini-2.5-flash`（超低レイテンシ・高精度）
-  - 指定可能: `gemini-2.0-flash`, `gemini-3.5-flash-lite`, `gemini-1.5-flash` 等
-- **システム指示（デフォルト）**:
-  - 原文の口調（敬体/常体、ニュアンス）を維持。
-  - 余計な解説文、挨拶、Markdownコードブロック、引用符を出力せず、修正後文章のみをダイレクト出力。
-  - 修正が不要な場合は原文をそのまま返す。
+- **タイムアウト**: `HttpClient.Timeout` = `30秒`。
+- **思考レベル制御 (`thinkingConfig`)**:
+  - `SupportsThinkingLevel(modelName)`: モデル名に `gemini-3` または `gemini-4`（大文字・小文字不問）を含む場合のみ `thinkingConfig.thinkingLevel` を送信し、`gemini-2.5-flash` / `gemini-2.0-flash` / `gemini-1.5-flash` 等の旧モデルでは送信を省略（400 エラー防止）。
+  - `ThinkingLevel` が空・`"OFF"`・`"DEFAULT"` の場合も省略。
+  - トークン上限: `MEDIUM` / `HIGH` 時は思考トークン消費を考慮し `maxOutputTokens = 8192`、それ以外は `4096`。
+- **思考パート除外 (`ExtractResponseText`)**:
+  - `candidates[0].content.parts` 配列のうち、`thought == true` の思考パートをスキップし、本文パートの `text` のみを結合。
+- **XML タグ構造化 (`BuildUserPrompt`)**:
+  - 推敲対象テキストは常に `<target>...</target>` で囲み、直前文脈があれば `<context>...</context>`、ローマ字崩壊ヒントがあれば `<keystroke_hint>...</keystroke_hint>` を付与。
 
-### 5. 推敲履歴と差分ハイライト
-- `Services/DiffHelper.cs` にて最長共通部分列（LCS: Longest Common Subsequence）アルゴリズムを実装。
-- 修正前と修正後の差分をトークン/文字単位で比較。
-- WPF リッチテキストブロック上で、削除部分（赤色背景・取消線）と追加部分（緑色背景・太字）を色分け描画。
+### 5. ポップアップ候補表示モードとフォーカス復帰
+- **候補生成 (`GetCandidatesAsync`)**:
+  - `temperature = 0.35`、`responseMimeType = "application/json"`、`responseSchema`（`ARRAY` of `STRING`）を指定し、最大 3 件の候補を構造化取得（候補 1＝最小介入の正確な修正、候補 2〜3＝別解釈・自然な言い換え）。
+  - `ParseCandidatesResponse`: Markdown コードブロックや前後説明文があっても `[` 〜 `]` を抽出してパース。クリーニング・空要素除去・順序維持重複排除・最大 3 件制限を行い、不正 JSON 時は `CleanResponse` による単一要素フォールバックを実施。
+  - 取得候補が 1 件のみで原文と完全一致する場合はポップアップを出さず「修正不要」として終了。
+- **フローティング UI (`CandidatePopupWindow`)**:
+  - `WindowStyle="None"` / `AllowsTransparency="True"` / `Topmost="True"` / `ShowInTaskbar="False"`。
+  - `Cursor.Position` と `Screen.FromPoint(pos).WorkingArea`、および `VisualTreeHelper.GetDpi` を用いて、高 DPI・マルチモニター環境でも作業領域内に収まる位置へクランプ表示。
+  - 操作：`1`〜`3`（メイン/テンキー）・`Enter`・左クリックで確定、`↑` / `↓` で選択移動、`Esc` またはウィンドウ外クリック（`Deactivated`）でキャンセル。
+- **元ウィンドウへのフォーカス復帰**:
+  - 処理開始時に `GetForegroundWindow()` で記憶した対象アプリハンドル `targetHwnd` に対し、候補決定後に `SetForegroundWindow(targetHwnd)` を呼び出し、20ms 間隔・最大 300ms のポーリングでフォーカス復帰を確認してから `Ctrl + V` を送信。
 
-### 6. ステータス通知トレイアイコン（動的ベクター描画）
-- GDI+（`System.Drawing`）により、「万年筆ペン先 ＋ AIキラキラ星」アイコンを動的生成（外部ICOファイルへの依存なし）。
-- バックグラウンドで推敲処理・結果に応じてリアルタイムに配色が変化し、2.5秒後に通常色へ自動復帰：
-  | 状態 | アイコン色 | 意味 |
-  |---|---|---|
-  | `Idle` | 🟦 ロイヤルブルー | 通常待機中 |
-  | `Processing` | 🟧 アンバーオレンジ | Gemini API 推敲中 |
-  | `Success` | 🟩 エメラルドグリーン | 文章修正・置換完了 |
-  | `NoChange` | ⬜ スレートグレー | 推敲完了（修正箇所なし） |
-  | `Error` | 🟥 クリムゾンレッド | API通信エラー / 失敗 |
-  | `Paused` | ⬛ ダークスレート | 機能一時停止中 |
+### 6. 固有名詞・表記ゆれ統一ルールと原文保全クリーニング
+- **固有名詞ルール結合 (`GetEffectiveSystemPrompt`)**:
+  - `CustomDictionaryRules` が空白以外の場合、`SystemPrompt` 末尾へ `【ユーザー定義の固有名詞・表記ゆれ統一ルール（最優先で遵守すること）】` セクションとして自動結合。設定画面の「デフォルトプロンプトに戻す」操作とは完全に独立。
+- **自動マイグレーション (`MigratePromptIfLegacy`)**:
+  - 過去のデフォルトプロンプト（v1 / v2）または空白が読み込まれた場合は最新 `DefaultPrompt` へ自動移行し、ユーザー独自編集プロンプトは維持。
+- **原文保全クリーニング (`CleanResponse(text, originalText)`)**:
+  - 元のテキストにコードブロック（```` ``` ````）・`<target>` タグ・先頭角括弧見出し（`【重要】` 等）・外側の引用符ペア（`「」`, `""`, `“”`）が元々含まれている場合は削除せず維持し、AI が誤って付加した装飾や XML/セクションラベルのオウム返しのみを除去。
+
+### 7. ローマ字打鍵崩壊アナライザー＆セッション文脈
+- **`KeystrokeAnalyzer.BuildAnalysisHint`**:
+  - ひらがな・カタカナ・漢字混在テキストに紛れたアルファベット子音残存（例: `あr瓦当`、`おhよう`、`sれでは`）等を検知し、読み還元テキストと推定ローマ字打鍵列（`argatou`, `ohyou`, `sredeha`）を生成して `<keystroke_hint>` として渡す（レイテンシ 0ms）。
+- **セッション文脈 (`HistoryManager.GetRecentContext`)**:
+  - 直近 5 分以内・最大 3 件の履歴から `Status != "エラー"` かつ `Status != "キャンセル"` の修正後テキストを古い順に結合して `<context>` として参照。
+
+### 8. 推敲履歴と差分ハイライト
+- `HistoryManager` に最新 100 件を保持し、`HistoryWindow` で一覧表示。
+- `DiffHelper`（LCS ベース）により、削除・変更前（赤色背景・取消線）と追加・変更後（緑色背景・太字）をハイライト表示。
+- ステータスバッジ：`✨ 修正あり`（`#10B981`）、`修正なし`（`#9CA3AF`）、`⏹️ キャンセル`（`#6B7280`）、`⚠️ エラー`（`#EF4444`）。
+
+### 9. ステータス通知トレイアイコン（動的ベクター描画）
+- GDI+（`System.Drawing`）による「万年筆ペン先 ＋ AI キラキラ星」の動的アイコン生成（外部 `.ico` ファイル不要）。
+- `Success` / `NoChange` / `Error` 状態は **6 秒後** に自動で `Idle` へ復帰：
+
+| 状態 | アイコン色 | 意味 |
+|---|---|---|
+| `Idle` | 🟦 ロイヤルブルー | 通常待機中 |
+| `Processing` | 🟧 アンバーオレンジ | Gemini API 推敲・候補取得中 |
+| `Success` | 🟩 エメラルドグリーン | 文章修正・置換完了 |
+| `NoChange` | ⬜ スレートグレー | 修正不要 / 候補選択キャンセル |
+| `Error` | 🟥 クリムゾンレッド | API 通信エラー / 失敗 |
+| `Paused` | ⬛ ダークスレート | キー監視一時停止中 |
 
 ---
 
 ## 💾 データ・設定仕様
 
 ### 設定ファイル (`settings.json`)
-設定ファイルは以下の優先順位で読み込み・保存されます：
-1. アプリケーション実行フォルダ直下の `settings.json`（ポータブル配置時）
-2. `%APPDATA%\IMESupport\settings.json`（通常インストール時）
+以下の優先順位で読み込み・保存されます：
+1. 実行ファイル直下の `settings.json`（存在する場合・ポータブル運用）
+2. `%APPDATA%\IMESupport\settings.json`（通常運用）
 
-#### 設定パラメータ一覧
+### 設定パラメータ一覧
 | 項目 | 型 | デフォルト値 | 説明 |
 |---|---|---|---|
 | `ApiKey` | `string` | `""` | Google Gemini API キー |
-| `Model` | `string` | `"gemini-2.5-flash"` | 使用するGeminiモデル識別子 |
-| `DoubleTapIntervalMs` | `int` | `350` | ダブルタップの最大間隔（200〜600ms） |
-| `TriggerKeyType` | `string` | `"Convert"` | トリガーキー種別 (`Convert`, `NonConvert`, `CtrlDouble`, `Custom`) |
-| `TriggerVirtualKey` | `int` | `0x1C` | トリガーの仮想キーコード (VK_CONVERT) |
-| `ShowNotification` | `bool` | `false` | 置換完了時のトースト通知フラグ |
-| `PlaySoundOnComplete` | `bool` | `false` | 完了時のビープ音再生フラグ |
-| `RestoreClipboard` | `bool` | `true` | クリップボード履歴自動復元フラグ |
-| `AutoSelectLineWhenEmpty` | `bool` | `true` | 未選択時の1段落自動選択フラグ |
-| `AutoStart` | `bool` | `false` | Windowsログオン時の自動起動フラグ |
-| `SystemPrompt` | `string` | (定義値) | AI推敲用プロンプトテンプレート |
+| `Model` | `string` | `"gemini-2.5-flash"` | 使用モデル名（UI からは `gemini-4-hydrogen` 等を選択・手入力可） |
+| `ThinkingLevel` | `string` | `"LOW"` | 思考レベル（`MINIMAL`, `LOW`, `MEDIUM`, `HIGH`） |
+| `EnableCandidatePopup` | `bool` | `false` | 複数候補ポップアップ表示モードの有効化フラグ |
+| `CustomDictionaryRules` | `string` | `""` | ユーザー定義の固有名詞・表記ゆれ統一ルール |
+| `DoubleTapIntervalMs` | `int` | `350` | ダブルタップ判定の最大間隔（`200〜650ms`） |
+| `TriggerKeyType` | `string` | `"Convert"` | トリガー種別（`Convert`, `NonConvert`, `CtrlDouble`, `ShiftDouble`, `AltDouble`, `Custom`） |
+| `TriggerVirtualKey` | `int` | `0x1C` | トリガー仮想キーコード（既定: `VK_CONVERT = 0x1C`） |
+| `ShowNotification` | `bool` | `false` | 完了・エラー時のデスクトップ通知表示フラグ |
+| `PlaySoundOnComplete` | `bool` | `false` | 置換完了時のシステム効果音再生フラグ |
+| `RestoreClipboard` | `bool` | `true` | 元のクリップボード内容復元フラグ |
+| `AutoSelectLineWhenEmpty` | `bool` | `true` | 未選択時の 1 段落自動選択フラグ |
+| `AutoStart` | `bool` | `false` | Windows 起動時の自動起動（HKCU Run レジストリ） |
+| `SystemPrompt` | `string` | (`DefaultPrompt`) | AI 推敲用システムプロンプト |
 
 ---
 
 ## 📁 プロジェクト構成
 
-```
+```text
 IMESupport/
-├── App.xaml / App.xaml.cs           # アプリケーションライフサイクル・常駐・二重起動制御
-├── GlobalUsings.cs                 # グローバル名前空間エイリアス
-├── AssemblyInfo.cs                 # アセンブリ属性定義
-├── IMESupport.csproj               # プロジェクト定義 (.NET 8.0, WPF + WinForms)
+├── App.xaml / App.xaml.cs               # アプリケーションライフサイクル・多重起動防止・サービス配線
+├── AssemblyInfo.cs                      # アセンブリ属性定義
+├── GlobalUsings.cs                      # 共通 using・WPF/WinForms 衝突解決
+├── IMESupport.csproj                    # プロジェクト定義 (.NET 8.0, WPF + WinForms)
+├── README.md                            # 本仕様書兼取扱説明書
+├── docs/
+│   └── screenshots/                     # README 掲載用スクリーンショット画像
+│       ├── settings.png
+│       ├── settings-rules.png
+│       ├── candidate-popup.png
+│       └── history.png
 ├── Models/
-│   ├── AppSettings.cs              # 設定モデル・JSONシリアライザ
-│   └── CorrectionHistory.cs        # 推敲履歴データモデル
+│   ├── AppSettings.cs                   # 設定管理・JSON永続化・プロンプト移行・固有名詞ルール結合
+│   └── CorrectionHistory.cs             # 推敲履歴モデル・直近文脈バッファ
 ├── Services/
-│   ├── GeminiService.cs            # Gemini REST API 通信・パース
-│   ├── KeyboardHookService.cs      # Win32 低レベルキーボードフック (WH_KEYBOARD_LL)
-│   ├── TextReplacementService.cs   # テキスト抽出・自動置換・クリップボード復元
-│   ├── DiffHelper.cs               # 履歴差分解析・カラーハイライト生成
-│   └── StartupManager.cs           # レジストリ (HKCU) スタートアップ制御
+│   ├── DiffHelper.cs                    # LCS ベースの文字列差分解析
+│   ├── GeminiService.cs                 # Gemini API 通信・thinkingLevel制御・候補パース・クリーニング
+│   ├── KeyboardHookService.cs           # Win32 低レベルキーボードフック (WH_KEYBOARD_LL)
+│   ├── KeystrokeAnalyzer.cs             # ローマ字打鍵崩壊の解析・推定打鍵列生成
+│   ├── StartupManager.cs                # Windows スタートアップレジストリ制御
+│   └── TextReplacementService.cs        # クリップボード退避/復元・段落選択・フォーカス復帰・置換実行
 ├── UI/
-│   ├── SettingsWindow.xaml(.cs)    # 設定ダイアログ・APIテスト・キー設定
-│   ├── HistoryWindow.xaml(.cs)     # 推敲履歴一覧・差分ビューア
-│   └── TrayIconManager.cs          # 通知領域トレイアイコン・右クリックメニュー
-└── tests/                          # ユニットテストプロジェクト
+│   ├── CandidatePopupWindow.xaml(.cs)   # 複数候補選択フローティングポップアップ
+│   ├── HistoryWindow.xaml(.cs)          # 推敲履歴一覧・差分カラーハイライトビューア
+│   ├── SettingsWindow.xaml(.cs)         # 設定ダイアログ・API接続/推敲テスト・キーモニター
+│   └── TrayIconManager.cs               # タスクトレイアイコン動的描画・右クリックメニュー
+└── tests/                               # 単体テストプロジェクト (MSTest)
+    ├── IMESupport.Tests.csproj
     ├── AppSettingsTests.cs
     ├── DiffHelperTests.cs
-    └── IMESupport.Tests.csproj
+    ├── GeminiServiceTests.cs
+    └── KeystrokeAnalyzerTests.cs
 ```
 
 ---
@@ -205,67 +288,58 @@ IMESupport/
 ## 🚀 セットアップと利用方法
 
 ### 1. 前提条件
-- **OS**: Windows 10 (バージョン 1809 以降) または Windows 11 (64-bit)
-- **ランタイム**: [.NET 8.0 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)（単一EXE配布版を使用する場合はインストール不要）
-- **Gemini API キー**: [Google AI Studio](https://aistudio.google.com/) から無料で取得可能
+- **OS**: Windows 10（バージョン 1809 以降）または Windows 11（64-bit）
+- **ランタイム**: [.NET 8.0 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)（自己完結型で発行する場合は不要）
+- **Gemini API キー**: [Google AI Studio](https://aistudio.google.com/) で取得
 
 ### 2. 初回起動手順
 1. `IMESupport.exe` を起動します。
-2. 初回起動時、自動的に「設定画面」が表示されます。
-3. **Gemini API キー**を入力し、**「API接続テスト」**をクリックして通信確認を行います。
-4. 「保存して閉じる」をクリックすると、タスクトレイ（通知領域）に青い万年筆アイコンで常駐します。
+2. API キー未設定時は自動的に設定画面が開きます。
+3. **Gemini API キー**を入力し、使用するモデル（例: `gemini-4-hydrogen` / `gemini-2.5-flash`）や思考レベル（`LOW` 推奨）を選び、**「🔌 API接続テスト」**で疎通を確認します。
+4. 必要に応じてトリガーキー、ポップアップ候補選択、固有名詞・表記ゆれルールを設定し、**「💾 保存して閉じる」**をクリックします。
 
 ### 3. 基本操作
-- **推敲の実行**:
-  - テキストを入力した直後に、キーボードの **「変換」キーを素早く2回押します**。
-  - 文字列の一部のみを推敲したい場合は、マウスや矢印キーで選択した状態で2回押します。
-- **トレイアイコンのダブルクリック（左クリック）**:
-  - **📜 推敲履歴**: 直前の推敲結果や差分ハイライト画面を瞬時に開きます。
-- **トレイメニュー（右クリック）**:
-  - **⚙️ 設定**: APIキー、モデル、トリガーキー、判定間隔、プロンプトの編集
-  - **📜 推敲履歴**: 差分ハイライト付き推敲ログ一覧
-  - **⏸️ 機能を一時停止**: キー監視の一時中断（アイコンがダークスレートに変化）
-  - **🔔 デスクトップ通知を表示**: トースト通知表示のON/OFF切り替え
-  - **🚀 Windows起動時に自動実行**: スタートアップ登録の切り替え
-  - **❌ 終了**: アプリケーションの終了
+- **推敲の実行**: 文章を入力した直後、または修正したい範囲を選択した状態で、設定したトリガーキー（既定: 変換キー、推奨: Ctrl キー）を 2 回連続で押します。
+- **ポップアップモード時の操作**: 候補が表示されたら `1`〜`3` キー・`Enter`・クリックで確定、`↑` / `↓` で選択移動、`Esc` または画面外クリックでキャンセルします。
+- **トレイアイコン操作**:
+  - ダブルクリック：推敲履歴画面を開きます。
+  - 右クリック：設定・履歴・機能の一時停止・**ポップアップで候補選択の切替**・デスクトップ通知・自動起動・終了。
 
 ---
 
-## 🔨 ビルドおよび発行手順
+## 🔨 ビルドおよびテスト手順
 
 ### 開発ビルド
 ```powershell
-# 依存関係の復元とビルド
-dotnet build
+dotnet build IMESupport.csproj
 ```
 
-### 単一実行ファイル（Self-contained なし・軽量版）の発行
-```powershell
-dotnet publish IMESupport.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o ./publish
-```
-
-### 完全自己完結型EXE（.NETランタイム同梱版）の発行
-```powershell
-dotnet publish IMESupport.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish-standalone
-```
-
-### ユニットテストの実行
+### 単体テストの実行
 ```powershell
 dotnet test tests/IMESupport.Tests.csproj
+```
+
+### 発行（Publish）
+```powershell
+# ランタイム別（軽量版）
+dotnet publish IMESupport.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o ./publish
+
+# 完全自己完結型（.NET ランタイム同梱版）
+dotnet publish IMESupport.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish-standalone
 ```
 
 ---
 
 ## 🛡️ トラブルシューティングとセキュリティ
 
-### 管理者権限アプリでの入力について
-Windowsのセキュリティ仕様（UIPI: User Interface Privilege Isolation）により、通常の権限で動作するプロセスは管理者権限で実行中のウィンドウ（例: 管理者コマンドプロンプトや一部のインストーラ）に対してキー入力を送信できません。これらのアプリで推敲機能を利用する場合は、`IMESupport.exe` を「管理者として実行」してください。
+### 管理者権限アプリでの動作について
+Windows の UIPI（User Interface Privilege Isolation）により、通常権限のプロセスから管理者権限のウィンドウ（管理者ターミナル等）へキー入力を送信することは制限されています。管理者権限アプリ上で使用する場合は `IMESupport.exe` も「管理者として実行」してください。
 
-### APIキーの取り扱い
-入力された Gemini API キーは、ローカルマシンの `%APPDATA%\IMESupport\settings.json`（またはポータブル設定ファイル）にのみ保存され、外部のサードパーティサーバーへ送信されることはありません。また、`.gitignore` によりGit管理から自動的に除外されます。
+### API キーおよび設定ファイルの保護
+Gemini API キーを含む設定ファイル（`settings.json`）やデバッグログ（`debug.log`）はローカル環境にのみ保存され、`.gitignore` により Git 管理対象から除外されています。
 
 ---
 
 ## 📄 ライセンス
 
-本プロジェクトは [MIT License](LICENSE) のもとで公開されています。
+本プロジェクトは MIT License のもとで公開されています。
